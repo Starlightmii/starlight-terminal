@@ -1,354 +1,331 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/catalogue.dart';
-import '../../core/console_engine.dart';
+import '../../core/app_log.dart';
 import '../../core/palette.dart';
-import '../../state/terminal_controller.dart';
+import '../../state/studio_controller.dart';
 import '../widgets/chrome.dart';
 
-/// Browsable observing log, backed by the same notes as `note` / `notes`.
-class LogScreen extends StatelessWidget {
+/// LOG — one honest timeline of everything the app did.
+///
+/// This is the unified sink: pi turns, bridge traffic, agent tool calls,
+/// scheduler firings and system events all land in the same stream, filterable
+/// by severity and scope. The old screen only showed observer notes.
+class LogScreen extends StatefulWidget {
   const LogScreen({super.key});
 
   @override
+  State<LogScreen> createState() => _LogScreenState();
+}
+
+class _LogScreenState extends State<LogScreen> {
+  LogLevel _floor = LogLevel.debug;
+  String _scope = '';
+  String _query = '';
+
+  @override
   Widget build(BuildContext context) {
-    final term = context.watch<TerminalController>();
-    final palette = term.palette;
-    final notes = term.notes.reversed.toList();
+    final studio = context.watch<StudioController>();
+    final palette = studio.terminal.palette;
+    final log = studio.appLog;
+
+    var entries = log.all;
+    if (_floor != LogLevel.debug) {
+      entries = entries.where((e) => e.level.index >= _floor.index).toList();
+    }
+    if (_scope.isNotEmpty) {
+      entries = entries
+          .where((e) => e.scope.toLowerCase() == _scope.toLowerCase())
+          .toList();
+    }
+    if (_query.trim().isNotEmpty) {
+      final q = _query.toLowerCase();
+      entries = entries
+          .where(
+            (e) =>
+                e.text.toLowerCase().contains(q) ||
+                e.scope.toLowerCase().contains(q),
+          )
+          .toList();
+    }
 
     return Column(
       children: [
-        TermPanel(
-          palette: palette,
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'OBSERVING LOG',
+        _header(palette, studio, log),
+        const SizedBox(height: 8),
+        _filters(palette, log),
+        const SizedBox(height: 8),
+        Expanded(
+          child: TermPanel(
+            palette: palette,
+            title: 'EVENT STREAM',
+            accent: true,
+            padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+            trailing: Text(
+              '${entries.length}/${log.length}',
+              style: TextStyle(
+                fontFamily: 'Mono',
+                fontSize: 8.5,
+                color: palette.dim,
+              ),
+            ),
+            child: entries.isEmpty
+                ? Center(
+                    child: Text(
+                      'no matching events',
                       style: TextStyle(
                         fontFamily: 'Mono',
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 2,
-                        color: palette.bright,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      '${notes.length} entr${notes.length == 1 ? 'y' : 'ies'} · '
-                      'persisted locally',
-                      style: TextStyle(
-                        fontFamily: 'Mono',
-                        fontSize: 10,
+                        fontSize: 9,
                         color: palette.dim,
                       ),
                     ),
-                  ],
-                ),
-              ),
-              InkWell(
-                onTap: () => _openComposer(context, term),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 11,
-                    vertical: 7,
+                  )
+                : ListView.builder(
+                    padding: EdgeInsets.zero,
+                    itemCount: entries.length,
+                    itemBuilder: (context, i) {
+                      final e = entries[i];
+                      final color = switch (e.level) {
+                        LogLevel.debug => palette.dim,
+                        LogLevel.info => palette.mid,
+                        LogLevel.tool => palette.warn,
+                        LogLevel.warn => palette.warn,
+                        LogLevel.error => palette.err,
+                      };
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              e.timeLabel,
+                              style: TextStyle(
+                                fontFamily: 'Mono',
+                                fontSize: 7.5,
+                                color: palette.dim.withValues(alpha: 0.8),
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            SizedBox(
+                              width: 22,
+                              child: Text(
+                                e.levelLabel,
+                                style: TextStyle(
+                                  fontFamily: 'Mono',
+                                  fontSize: 7,
+                                  fontWeight: FontWeight.w700,
+                                  color: color,
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 46,
+                              child: Text(
+                                e.scope,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontFamily: 'Mono',
+                                  fontSize: 7.5,
+                                  color: palette.dim,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                e.text,
+                                maxLines: 4,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontFamily: 'Mono',
+                                  fontSize: 8,
+                                  height: 1.35,
+                                  color: color,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: palette.mid),
-                    color: palette.mid.withValues(alpha: 0.10),
-                  ),
-                  child: Text(
-                    '+ NEW NOTE',
-                    style: TextStyle(
-                      fontFamily: 'Mono',
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.2,
-                      color: palette.bright,
-                    ),
-                  ),
-                ),
-              ),
-            ],
           ),
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: notes.isEmpty
-              ? _empty(palette, term)
-              : ListView.separated(
-                  itemCount: notes.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (context, i) {
-                    final originalIndex = term.notes.length - 1 - i;
-                    return _noteCard(
-                      context,
-                      term,
-                      palette,
-                      notes[i],
-                      originalIndex,
-                    );
-                  },
-                ),
         ),
       ],
     );
   }
 
-  Widget _empty(Palette palette, TerminalController term) {
+  Widget _header(Palette palette, StudioController studio, AppLog log) {
     return TermPanel(
       palette: palette,
-      accent: true,
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('✦', style: TextStyle(fontSize: 34, color: palette.dim)),
-            const SizedBox(height: 12),
-            Text(
-              'the log is empty',
-              style: TextStyle(
-                fontFamily: 'Mono',
-                fontSize: 13,
-                color: palette.mid,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'note <text>  ·  or tap + NEW NOTE',
-              style: TextStyle(
-                fontFamily: 'Mono',
-                fontSize: 11,
-                color: palette.dim,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _noteCard(
-    BuildContext context,
-    TerminalController term,
-    Palette palette,
-    SkyNote note,
-    int index,
-  ) {
-    final starName = _starName(note.starId);
-    return TermPanel(
-      palette: palette,
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
+      child: Row(
         children: [
-          Row(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '#${index + 1}',
+                'SYSTEM LOG',
                 style: TextStyle(
                   fontFamily: 'Mono',
                   fontSize: 10,
+                  letterSpacing: 1.6,
                   fontWeight: FontWeight.w700,
-                  color: palette.dim,
+                  color: palette.bright,
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(height: 3),
               Text(
-                fmtClock(note.createdAt),
+                '${log.countOf(LogLevel.error)} err · '
+                '${log.countOf(LogLevel.warn)} warn · '
+                '${log.countOf(LogLevel.tool)} tool · '
+                '${log.length} total',
                 style: TextStyle(
                   fontFamily: 'Mono',
-                  fontSize: 10,
+                  fontSize: 8.5,
                   color: palette.dim,
-                ),
-              ),
-              if (starName != null) ...[
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 5,
-                    vertical: 1,
-                  ),
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: palette.mid.withValues(alpha: 0.5),
-                    ),
-                  ),
-                  child: Text(
-                    '⇒ $starName',
-                    style: TextStyle(
-                      fontFamily: 'Mono',
-                      fontSize: 9,
-                      color: palette.mid,
-                    ),
-                  ),
-                ),
-              ],
-              const Spacer(),
-              InkWell(
-                onTap: () => term.deleteNote(index),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  child: Text(
-                    '✕',
-                    style: TextStyle(
-                      fontFamily: 'Mono',
-                      fontSize: 14,
-                      color: palette.err.withValues(alpha: 0.8),
-                    ),
-                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 7),
-          Text(
-            note.text,
-            style: TextStyle(
-              fontFamily: 'Mono',
-              fontSize: 12,
-              height: 1.45,
-              color: palette.mid,
-            ),
-          ),
+          const Spacer(),
+          _btn(palette, 'CLEAR', log.clear),
         ],
       ),
     );
   }
 
-  String? _starName(String? id) {
-    if (id == null) return null;
-    for (final s in kStarCatalogue) {
-      if (s.id == id) return s.name;
-    }
-    return null;
-  }
-
-  Future<void> _openComposer(
-    BuildContext context,
-    TerminalController term,
-  ) async {
-    final controller = TextEditingController();
-    final palette = term.palette;
-    final selected = term.selectedStar;
-
-    await showDialog<void>(
-      context: context,
-      barrierColor: palette.bg.withValues(alpha: 0.82),
-      builder: (ctx) => Dialog(
-        backgroundColor: palette.panel,
-        shape: RoundedRectangleBorder(
-          side: BorderSide(color: palette.mid),
-          borderRadius: BorderRadius.zero,
+  Widget _filters(Palette palette, AppLog log) {
+    final scopes = log.scopes.take(8).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            for (final l in [
+              LogLevel.debug,
+              LogLevel.info,
+              LogLevel.tool,
+              LogLevel.warn,
+              LogLevel.error,
+            ]) ...[
+              _chip(
+                palette,
+                l.name.toUpperCase(),
+                _floor == l,
+                () => setState(() => _floor = l),
+              ),
+              const SizedBox(width: 4),
+            ],
+          ],
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '[ NEW LOG ENTRY ]',
-                style: TextStyle(
-                  fontFamily: 'Mono',
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.6,
-                  color: palette.bright,
+        const SizedBox(height: 5),
+        Row(
+          children: [
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _chip(palette, 'ALL', _scope.isEmpty, () {
+                      setState(() => _scope = '');
+                    }),
+                    const SizedBox(width: 4),
+                    for (final s in scopes) ...[
+                      _chip(palette, s, _scope == s, () {
+                        setState(() => _scope = _scope == s ? '' : s);
+                      }),
+                      const SizedBox(width: 4),
+                    ],
+                  ],
                 ),
               ),
-              if (selected != null) ...[
-                const SizedBox(height: 6),
-                Text(
-                  'tagged ⇒ ${selected.name}',
-                  style: TextStyle(
-                    fontFamily: 'Mono',
-                    fontSize: 10,
-                    color: palette.dim,
-                  ),
-                ),
-              ],
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                autofocus: true,
-                maxLines: 4,
-                minLines: 2,
-                cursorColor: palette.bright,
-                cursorWidth: 5,
+            ),
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 110,
+              height: 20,
+              child: TextField(
+                onChanged: (v) => setState(() => _query = v),
                 style: TextStyle(
                   fontFamily: 'Mono',
-                  fontSize: 12.5,
-                  height: 1.45,
+                  fontSize: 8.5,
                   color: palette.bright,
                 ),
+                cursorColor: palette.bright,
                 decoration: InputDecoration(
-                  hintText: 'seeing 8/10, M13 resolved at 120×',
-                  hintStyle: TextStyle(
-                    fontFamily: 'Mono',
-                    fontSize: 11.5,
-                    color: palette.dim.withValues(alpha: 0.7),
-                  ),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 5),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.zero,
+                    borderSide: BorderSide(color: palette.line),
+                  ),
+                  enabledBorder: OutlineInputBorder(
                     borderSide: BorderSide(color: palette.line),
                   ),
                   focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.zero,
-                    borderSide: BorderSide(color: palette.mid),
+                    borderSide: BorderSide(color: palette.bright),
                   ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.zero,
-                    borderSide: BorderSide(color: palette.line),
+                  hintText: 'grep…',
+                  hintStyle: TextStyle(
+                    fontFamily: 'Mono',
+                    fontSize: 8.5,
+                    color: palette.dim,
                   ),
                 ),
               ),
-              const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(),
-                    child: Text(
-                      'CANCEL',
-                      style: TextStyle(
-                        fontFamily: 'Mono',
-                        fontSize: 10.5,
-                        letterSpacing: 1.2,
-                        color: palette.dim,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  TextButton(
-                    onPressed: () {
-                      term.addNote(controller.text);
-                      Navigator.of(ctx).pop();
-                    },
-                    child: Text(
-                      'SAVE',
-                      style: TextStyle(
-                        fontFamily: 'Mono',
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.2,
-                        color: palette.bright,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _btn(Palette palette, String label, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(border: Border.all(color: palette.line)),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontFamily: 'Mono',
+            fontSize: 7.5,
+            letterSpacing: 1,
+            fontWeight: FontWeight.w700,
+            color: palette.mid,
           ),
         ),
       ),
     );
-    controller.dispose();
+  }
+
+  Widget _chip(
+    Palette palette,
+    String label,
+    bool active,
+    VoidCallback onTap,
+  ) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          border: Border.all(color: active ? palette.bright : palette.line),
+          color: active
+              ? palette.bright.withValues(alpha: 0.1)
+              : Colors.transparent,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontFamily: 'Mono',
+            fontSize: 7,
+            letterSpacing: 0.8,
+            fontWeight: FontWeight.w700,
+            color: active ? palette.bright : palette.dim,
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/console_engine.dart';
 import '../../core/palette.dart';
+import '../../state/studio_controller.dart';
 import '../../state/terminal_controller.dart';
 
 /// Pre-session boot screen: tube warm-up, banner, progress.
@@ -306,6 +307,7 @@ class SystemScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final term = context.watch<TerminalController>();
+    final studio = context.watch<StudioController>();
     final palette = term.palette;
 
     return ListView(
