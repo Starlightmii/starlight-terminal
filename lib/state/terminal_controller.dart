@@ -90,6 +90,10 @@ class TerminalController extends ChangeNotifier {
   String _observer = 'guest';
   String get observer => _observer;
 
+  /// Bridge to the studio (agents, keys, effects). Wired by [StudioController]
+  /// after construction so the console can talk to them without a cycle.
+  CommandBridge? bridge;
+
   // ── Notes ───────────────────────────────────────────────────────────────
   final List<SkyNote> _notes = <SkyNote>[];
   List<SkyNote> get notes => List.unmodifiable(_notes);
@@ -393,6 +397,20 @@ class TerminalController extends ChangeNotifier {
       case 'status':
       case 'stat':
         _cmdStatus();
+      case 'agent':
+      case 'agents':
+        _cmdAgents(args);
+      case 'ask':
+        _cmdAsk(args);
+      case 'fleet':
+        _cmdFleet(args);
+      case 'keys':
+        _cmdKeys(args);
+      case 'key':
+        _cmdKeys(args);
+      case 'fx':
+      case 'effect':
+        _cmdEffect(args);
       case 'about':
         _cmdAbout();
       case 'clear':
@@ -437,6 +455,12 @@ class TerminalController extends ChangeNotifier {
       ['del <n>', 'delete note number n'],
       ['theme <name>', 'phosphor / amber / ice / nebula'],
       ['crt', 'toggle the scanline overlay'],
+      ['agent', 'the agent fleet and their state'],
+      ['ask <agent> <task>', 'run one agent on a task'],
+      ['fleet <task>', 'broadcast a task to every agent'],
+      ['keys', 'provider key vault status'],
+      ['keys set <id> <key>', 'store an API key'],
+      ['fx [name]', 'switch the background effect'],
       ['status', 'full terminal state dump'],
       ['banner', 'redraw the boot banner'],
       ['clear', 'wipe the scrollback'],
@@ -904,6 +928,161 @@ class TerminalController extends ChangeNotifier {
     print('  built with Flutter · running on web + android', tone: Tone.dim);
   }
 
+  // ── Agents / keys / effects ────────────────────────────────────────────
+
+  void _cmdAgents(List<String> args) {
+    final b = bridge;
+    if (b == null) {
+      print('  agent runtime not mounted.', tone: Tone.err);
+      return;
+    }
+    final agents = b.agentSummary();
+    if (args.isNotEmpty && args.first == 'list') {
+      print(ruleLine('AGENTS', 50), tone: Tone.heading);
+      for (final a in agents) {
+        print('  ${a.enabled ? '●' : '○'} ${pad(a.name, 12)}'
+            '${pad(a.provider, 12)}${a.state}',
+            tone: a.enabled ? Tone.plain : Tone.dim);
+      }
+      print('  *ask <agent> <task>* to run one, *fleet <task>* for all.',
+          tone: Tone.dim);
+      return;
+    }
+    print(ruleLine('AGENT FLEET', 50), tone: Tone.heading, glow: true);
+    if (agents.isEmpty) {
+      print('  no agents configured.', tone: Tone.warn);
+      return;
+    }
+    for (final a in agents) {
+      final mark = a.enabled ? '●' : '○';
+      print('  $mark ${pad(a.name, 12)}${pad(a.provider, 13)}${a.state}',
+          tone: a.enabled ? Tone.bright : Tone.dim);
+    }
+    print(ruleLine('', 50), tone: Tone.line);
+    print('  ${agents.where((a) => a.enabled).length}/${agents.length} enabled · '
+        '${b.configuredKeys} provider key(s) ready', tone: Tone.dim);
+    print('  *ask surveyor what is up* · *fleet survey the sky*', tone: Tone.dim);
+  }
+
+  void _cmdAsk(List<String> args) {
+    final b = bridge;
+    if (b == null) {
+      print('  agent runtime not mounted.', tone: Tone.err);
+      return;
+    }
+    if (args.length < 2) {
+      print('  usage: ask <agent> <task>', tone: Tone.warn);
+      print('  example: ask surveyor what is above the horizon', tone: Tone.dim);
+      return;
+    }
+    final wanted = args.first.toLowerCase();
+    final match = b
+        .agentSummary()
+        .where((a) => a.name.toLowerCase() == wanted)
+        .toList();
+    if (match.isEmpty) {
+      print('  no agent named "$wanted".', tone: Tone.err);
+      final names = b.agentSummary().map((a) => a.name.toLowerCase()).join(', ');
+      print('  available: $names', tone: Tone.dim);
+      return;
+    }
+    final task = args.sublist(1).join(' ');
+    print('  dispatching to ${match.first.name}…', tone: Tone.ok);
+    b.runAgentTask(match.first.id, task);
+  }
+
+  void _cmdFleet(List<String> args) {
+    final b = bridge;
+    if (b == null) {
+      print('  agent runtime not mounted.', tone: Tone.err);
+      return;
+    }
+    if (args.isEmpty) {
+      print('  usage: fleet <task>', tone: Tone.warn);
+      return;
+    }
+    final task = args.join(' ');
+    print('  broadcasting to the fleet: "$task"', tone: Tone.ok, glow: true);
+    b.runFleet(task);
+  }
+
+  void _cmdKeys(List<String> args) {
+    final b = bridge;
+    if (b == null) {
+      print('  key vault not mounted.', tone: Tone.err);
+      return;
+    }
+    final providers = b.providerSummary();
+
+    if (args.isEmpty || args.first == 'list') {
+      print(ruleLine('KEY VAULT', 52), tone: Tone.heading);
+      print('  ${b.configuredKeys} of ${providers.length} providers ready',
+          tone: b.configuredKeys > 0 ? Tone.ok : Tone.warn);
+      print('');
+      for (final p in providers) {
+        final mark = p.ready ? '●' : '○';
+        print('  $mark ${pad(p.label, 20)}${pad(p.kind, 7)}${p.masked}',
+            tone: p.ready ? Tone.plain : Tone.dim);
+      }
+      print('');
+      print('  *keys set <id> <key>* to store a key.', tone: Tone.dim);
+      return;
+    }
+
+    if (args.first == 'set') {
+      if (args.length < 3) {
+        print('  usage: keys set <provider-id> <key>', tone: Tone.warn);
+        return;
+      }
+      final id = args[1].toLowerCase();
+      final key = args.sublist(2).join(' ').trim();
+      final exists = providers.any((p) => p.id == id);
+      if (!exists) {
+        print('  unknown provider "$id". try *keys list*.', tone: Tone.err);
+        return;
+      }
+      b.setProviderKey(id, key);
+      // Never echo the key back — only a masked confirmation.
+      print('  key stored for $id (${key.length} chars)', tone: Tone.ok);
+      print('  note: keys live in local storage on this device only.',
+          tone: Tone.dim);
+      return;
+    }
+
+    print('  usage: keys [list] | keys set <id> <key>', tone: Tone.warn);
+  }
+
+  void _cmdEffect(List<String> args) {
+    final b = bridge;
+    if (b == null) {
+      print('  effect stack not mounted.', tone: Tone.err);
+      return;
+    }
+    if (args.isEmpty) {
+      print(ruleLine('BACKGROUND EFFECT', 46), tone: Tone.heading);
+      final current = b.currentEffect();
+      for (final name in b.effectNames()) {
+        final mark = name == current ? '●' : '○';
+        print('  $mark $name', tone: name == current ? Tone.bright : Tone.plain);
+      }
+      print('');
+      print('  *fx <name>* to switch · *fx random* to roll', tone: Tone.dim);
+      return;
+    }
+    final name = args.first.toLowerCase();
+    if (name == 'random' || name == 'randomise' || name == 'randomize') {
+      b.randomiseEffect();
+      print('  effect rolled → ${b.currentEffect()}', tone: Tone.ok, glow: true);
+      return;
+    }
+    if (!b.effectNames().contains(name)) {
+      print('  unknown effect "$name".', tone: Tone.err);
+      return;
+    }
+    b.setEffect(name);
+    print('  effect → $name', tone: Tone.ok, glow: true);
+  }
+
   void _cmdBanner() {
     print('');
     for (final line in bannerLines) {
@@ -1102,6 +1281,23 @@ class TerminalController extends ChangeNotifier {
       /* ignore */
     }
   }
+}
+
+/// Callbacks the console uses to drive the studio. Implemented by
+/// StudioController; kept as an interface so the terminal stays testable.
+abstract class CommandBridge {
+  List<({String id, String name, bool enabled, String provider, String state})>
+      agentSummary();
+  void runAgentTask(String agentId, String task);
+  void runFleet(String task);
+  List<({String id, String label, String kind, bool ready, String masked})>
+      providerSummary();
+  void setProviderKey(String providerId, String key);
+  int get configuredKeys;
+  List<String> effectNames();
+  String currentEffect();
+  void setEffect(String name);
+  void randomiseEffect();
 }
 
 /// A single observing-log entry.

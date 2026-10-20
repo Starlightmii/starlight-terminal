@@ -109,7 +109,7 @@ class LogScreen extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('✧', style: TextStyle(fontSize: 34, color: palette.dim)),
+            Text('✦', style: TextStyle(fontSize: 34, color: palette.dim)),
             const SizedBox(height: 12),
             Text(
               'the log is empty',

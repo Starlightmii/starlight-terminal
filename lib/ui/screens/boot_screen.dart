@@ -208,9 +208,12 @@ class TermNavBar extends StatelessWidget {
   static const List<({String label, String glyph})> tabs = [
     (label: 'CONSOLE', glyph: '❯'),
     (label: 'MAP', glyph: '◎'),
-    (label: 'CATALOGUE', glyph: '★'),
+    (label: 'STARS', glyph: '★'),
+    (label: 'AGENTS', glyph: '◈'),
+    (label: 'KEYS', glyph: '⌸'),
+    (label: 'FX', glyph: '≋'),
     (label: 'LOG', glyph: '≡'),
-    (label: 'SYSTEM', glyph: '⌥'),
+    (label: 'SYSTEM', glyph: '⚙'),
   ];
 
   @override

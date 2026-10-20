@@ -1,0 +1,536 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../core/agent_runtime.dart';
+import '../core/effects.dart';
+import '../core/palette.dart';
+import '../core/providers.dart';
+import 'terminal_controller.dart';
+
+/// How a multi-agent run is coordinated.
+enum OrchestrationMode {
+  /// Every enabled agent gets the same task, in parallel.
+  broadcast,
+
+  /// Agents run one after another, each seeing the previous summary.
+  pipeline,
+
+  /// One coordinator expands the task and dispatches per-agent subtasks.
+  dispatch,
+}
+
+/// Owns everything that is not "the sky": provider keys, the agent fleet,
+/// and the background effect stack.
+class StudioController extends ChangeNotifier implements CommandBridge {
+  StudioController({required this.terminal});
+
+  final TerminalController terminal;
+
+  // ── Providers / keys ───────────────────────────────────────────────────
+  List<Provider> _providers = List<Provider>.from(ProviderPresets.all);
+  List<Provider> get providers => List.unmodifiable(_providers);
+
+  Provider? byId(String id) {
+    for (final p in _providers) {
+      if (p.id == id) return p;
+    }
+    return null;
+  }
+
+  List<Provider> get readyProviders =>
+      _providers.where((p) => p.ready && p.looksPlausible).toList();
+
+  List<Provider> ofKind(ProviderKind k) =>
+      _providers.where((p) => p.kind == k).toList();
+
+  int get configuredCount => readyProviders.length;
+
+  // ── Agents ─────────────────────────────────────────────────────────────
+  final List<AgentRuntime> _agents = AgentPresets.build();
+  List<AgentRuntime> get agents => List.unmodifiable(_agents);
+
+  AgentRuntime? agentById(String id) {
+    for (final a in _agents) {
+      if (a.id == id) return a;
+    }
+    return null;
+  }
+
+  AgentLoop? _loop;
+
+  /// A flat, tail-able event feed across every agent.
+  final List<AgentEvent> _feed = <AgentEvent>[];
+  List<AgentEvent> get feed => List.unmodifiable(_feed);
+
+  String? _feedAuthor;
+  String? get feedAuthor => _feedAuthor;
+
+  bool _orchestrating = false;
+  bool get orchestrating => _orchestrating;
+
+  OrchestrationMode _mode = OrchestrationMode.broadcast;
+  OrchestrationMode get mode => _mode;
+
+  // ── Effects ────────────────────────────────────────────────────────────
+  EffectParams _effects = const EffectParams();
+  EffectParams get effects => _effects;
+
+  // ── Internals ──────────────────────────────────────────────────────────
+  SharedPreferences? _prefs;
+  bool _disposed = false;
+  int _customSeq = 0;
+
+  static const _kProviders = 'starlight.providers.v1';
+  static const _kAgents = 'starlight.agents.v1';
+  static const _kEffects = 'starlight.effects.v1';
+
+  // ── Lifecycle ──────────────────────────────────────────────────────────
+
+  Future<void> start() async {
+    try {
+      _prefs = await SharedPreferences.getInstance();
+      _restoreProviders();
+      _restoreAgents();
+      _restoreEffects();
+    } catch (_) {
+      // Persistence is optional; the studio works in-memory regardless.
+    }
+    _installLoop();
+    // Let the console drive agents, keys and effects from the prompt.
+    terminal.bridge = this;
+    _notify();
+  }
+
+  void _installLoop() {
+    _loop = AgentLoop(
+      context: AgentContext(
+        stars: terminal.stars,
+        latitude: terminal.latitude,
+        longitude: terminal.longitude,
+        lstDegrees: terminal.lstDegrees,
+        now: terminal.observationTime,
+        siteName: terminal.siteName,
+        onNote: terminal.addNote,
+        onPalette: (name) => terminal.setPalette(Palette.byName(name)),
+        onTimeShift: terminal.shiftTime,
+        onEffect: (id) => setEffectByName(id),
+      ),
+      providerFor: byId,
+      onEvent: _onAgentEvent,
+    );
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
+
+  // ── Provider mutations ─────────────────────────────────────────────────
+
+  void setKey(String providerId, String key) {
+    final i = _providers.indexWhere((p) => p.id == providerId);
+    if (i < 0) return;
+    _providers[i] = _providers[i].copyWith(apiKey: key.trim());
+    _persistProviders();
+    _notify();
+  }
+
+  void setModel(String providerId, String model) {
+    final i = _providers.indexWhere((p) => p.id == providerId);
+    if (i < 0) return;
+    _providers[i] = _providers[i].copyWith(model: model.trim());
+    _persistProviders();
+    _notify();
+  }
+
+  void setBaseUrl(String providerId, String url) {
+    final i = _providers.indexWhere((p) => p.id == providerId);
+    if (i < 0) return;
+    _providers[i] = _providers[i].copyWith(baseUrl: url.trim());
+    _persistProviders();
+    _notify();
+  }
+
+  void toggleProvider(String providerId) {
+    final i = _providers.indexWhere((p) => p.id == providerId);
+    if (i < 0) return;
+    _providers[i] = _providers[i].copyWith(enabled: !_providers[i].enabled);
+    _persistProviders();
+    _notify();
+  }
+
+  void clearKey(String providerId) => setKey(providerId, '');
+
+  /// Add a custom OpenAI-compatible endpoint.
+  Provider addCustomProvider({
+    required String label,
+    required String baseUrl,
+    required String model,
+    ProviderKind kind = ProviderKind.llm,
+    String apiKey = '',
+  }) {
+    _customSeq++;
+    final p = Provider(
+      id: 'custom-$_customSeq',
+      label: label.isEmpty ? 'Custom $_customSeq' : label,
+      kind: kind,
+      baseUrl: baseUrl,
+      model: model,
+      apiKey: apiKey,
+      notes: 'User-defined OpenAI-compatible endpoint.',
+    );
+    _providers.add(p);
+    _persistProviders();
+    _notify();
+    return p;
+  }
+
+  void removeProvider(String id) {
+    _providers.removeWhere((p) => p.id == id && !p.isPreset);
+    _persistProviders();
+    _notify();
+  }
+
+  // ── Agent mutations ────────────────────────────────────────────────────
+
+  void bindAgent(String agentId, String providerId) {
+    final a = agentById(agentId);
+    if (a == null) return;
+    _agents[_agents.indexOf(a)] = AgentRuntime(
+      id: a.id,
+      name: a.name,
+      persona: a.persona,
+      providerId: providerId,
+      enabled: a.enabled,
+      colorIndex: a.colorIndex,
+    );
+    _persistAgents();
+    _notify();
+  }
+
+  void toggleAgent(String agentId) {
+    final a = agentById(agentId);
+    if (a == null) return;
+    a.enabled = !a.enabled;
+    _persistAgents();
+    _notify();
+  }
+
+  void addAgent({required String name, required String persona}) {
+    final id = 'agent-${DateTime.now().millisecondsSinceEpoch % 100000}';
+    _agents.add(AgentRuntime(
+      id: id,
+      name: name.toUpperCase(),
+      persona: persona,
+      providerId: readyProviders.isEmpty ? 'groq' : readyProviders.first.id,
+      colorIndex: _agents.length % 4,
+    ));
+    _persistAgents();
+    _notify();
+  }
+
+  void removeAgent(String id) {
+    _agents.removeWhere((a) => a.id == id);
+    _persistAgents();
+    _notify();
+  }
+
+  void resetAgent(String id) {
+    agentById(id)?.reset();
+    _notify();
+  }
+
+  // ── Running ────────────────────────────────────────────────────────────
+
+  void _onAgentEvent(AgentRuntime agent, AgentEvent event) {
+    _feedAuthor = agent.name;
+    _feed.add(event);
+    if (_feed.length > 200) _feed.removeRange(0, _feed.length - 200);
+    _notify();
+  }
+
+  /// Run a task on a single agent.
+  Future<void> runAgent(String agentId, String task) async {
+    final agent = agentById(agentId);
+    final loop = _loop;
+    if (agent == null || loop == null || task.trim().isEmpty) return;
+    await loop.run(agent, task.trim());
+    _notify();
+  }
+
+  void cancelAgent(String agentId) {
+    _loop?.cancel(agentId);
+    _notify();
+  }
+
+  void setMode(OrchestrationMode m) {
+    _mode = m;
+    _notify();
+  }
+
+  /// Run a task across every enabled agent according to [mode].
+  Future<void> dispatchFleet(String task, {OrchestrationMode? mode}) async {
+    if (_orchestrating || task.trim().isEmpty) return;
+    final loop = _loop;
+    if (loop == null) return;
+
+    final active = _agents.where((a) => a.enabled).toList();
+    if (active.isEmpty) return;
+
+    _orchestrating = true;
+    if (mode != null) _mode = mode;
+    _notify();
+
+    try {
+      switch (_mode) {
+        case OrchestrationMode.broadcast:
+          // All agents work the same brief at once.
+          await Future.wait(
+            active.map((a) => loop.run(a, task.trim(), maxTurns: 4)),
+          );
+        case OrchestrationMode.pipeline:
+          // Each agent starts from the previous one's last message.
+          var carry = '';
+          for (final a in active) {
+            final brief = carry.isEmpty
+                ? task.trim()
+                : '${task.trim()}\n\nPrevious agent (${a.name}) said:\n$carry';
+            await loop.run(a, brief, maxTurns: 4);
+            final last = a.transcript.isEmpty ? '' : a.transcript.last.text;
+            carry = last.length > 400 ? last.substring(0, 400) : last;
+          }
+        case OrchestrationMode.dispatch:
+          // Split the brief into a job per agent, then run them concurrently.
+          final jobs = _dispatch(task.trim(), active);
+          await Future.wait([
+            for (var i = 0; i < active.length; i++)
+              loop.run(active[i], jobs[i], maxTurns: 4),
+          ]);
+      }
+    } finally {
+      _orchestrating = false;
+      _notify();
+    }
+  }
+
+  /// Split one brief into per-agent jobs by matching persona keywords.
+  List<String> _dispatch(String task, List<AgentRuntime> agents) {
+    final sky = _query(task, const [
+      'sky', 'visible', 'see', 'look', 'up', 'brightest', 'tonight'
+    ]);
+    final coords = _query(task, const [
+      'where', 'coordinate', 'ra', 'dec', 'position', 'find', 'locate'
+    ]);
+    final look = _query(task, const [
+      'theme', 'palette', 'effect', 'colour', 'color', 'look', 'style'
+    ]);
+
+    return agents.map((a) {
+      switch (a.id) {
+        case 'surveyor':
+          return 'Report the visible sky.${sky ? ' Focus on what is worth seeing now.' : ''} $task';
+        case 'navigator':
+          return 'Resolve coordinates and positions.${coords ? ' Give where to look.' : ''} $task';
+        case 'scribe':
+          return 'Record the outcome of this session in the log. $task';
+        case 'curator':
+          return 'Adjust the terminal look for this session.${look ? ' Change palette or effect.' : ''} $task';
+        default:
+          return task;
+      }
+    }).toList();
+  }
+
+  bool _query(String task, List<String> words) {
+    final q = task.toLowerCase();
+    return words.any(q.contains);
+  }
+
+  // ── Effects ────────────────────────────────────────────────────────────
+
+  void setEffects(EffectParams p) {
+    _effects = p;
+    _persistEffects();
+    _notify();
+  }
+
+  void setEffectKind(EffectKind kind) => setEffects(_effects.copyWith(kind: kind));
+
+  void setEffectByName(String name) {
+    final n = name.trim().toLowerCase();
+    for (final k in EffectKind.values) {
+      if (k.name == n) {
+        setEffectKind(k);
+        return;
+      }
+    }
+  }
+
+  void randomiseEffects() {
+    final r = math.Random();
+    setEffects(EffectParams(
+      kind: EffectKind.values[r.nextInt(EffectKind.values.length)],
+      intensity: 0.35 + r.nextDouble() * 0.55,
+      speed: 0.4 + r.nextDouble() * 1.8,
+      density: 0.25 + r.nextDouble() * 0.7,
+      scale: 0.6 + r.nextDouble() * 1.2,
+      chroma: r.nextDouble(),
+      grain: r.nextDouble() * 0.5,
+    ));
+  }
+
+  void resetEffects() => setEffects(const EffectParams());
+
+  // ── CommandBridge ──────────────────────────────────────────────────────
+
+  @override
+  List<({String id, String name, bool enabled, String provider, String state})>
+      agentSummary() {
+    return _agents.map((a) {
+      final stateLabel = switch (a.state) {
+        AgentRunState.idle => 'idle',
+        AgentRunState.thinking => 'thinking',
+        AgentRunState.toolCall => 'tool',
+        AgentRunState.done => 'done',
+        AgentRunState.error => 'error',
+        AgentRunState.cancelled => 'stopped',
+      };
+      return (
+        id: a.id,
+        name: a.name,
+        enabled: a.enabled,
+        provider: byId(a.providerId)?.label ?? 'unbound',
+        state: stateLabel,
+      );
+    }).toList();
+  }
+
+  @override
+  void runAgentTask(String agentId, String task) {
+    // Fire and forget: the console prints its own acknowledgement and the
+    // AGENTS panel shows live progress.
+    unawaited(runAgent(agentId, task));
+  }
+
+  @override
+  void runFleet(String task) {
+    if (task.trim().isEmpty) return;
+    unawaited(dispatchFleet(task));
+  }
+
+  @override
+  List<({String id, String label, String kind, bool ready, String masked})>
+      providerSummary() {
+    return _providers
+        .map((p) => (
+              id: p.id,
+              label: p.label,
+              kind: p.kindLabel,
+              ready: p.ready && p.looksPlausible,
+              masked: p.maskedKey,
+            ))
+        .toList();
+  }
+
+  @override
+  void setProviderKey(String providerId, String key) => setKey(providerId, key);
+
+  @override
+  int get configuredKeys => configuredCount;
+
+  @override
+  List<String> effectNames() =>
+      EffectKind.values.map((k) => k.name).toList();
+
+  @override
+  String currentEffect() => _effects.kind.name;
+
+  @override
+  void setEffect(String name) => setEffectByName(name);
+
+  @override
+  void randomiseEffect() => randomiseEffects();
+
+  // ── Persistence ────────────────────────────────────────────────────────
+
+  void _restoreProviders() {
+    final raw = _prefs?.getString(_kProviders);
+    if (raw == null) return;
+    try {
+      final list = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+      final stored = list.map(Provider.fromJson).toList();
+      // Merge: keep any preset the stored data does not know about.
+      final ids = stored.map((p) => p.id).toSet();
+      final merged = <Provider>[
+        ...stored,
+        ...ProviderPresets.all.where((p) => !ids.contains(p.id)),
+      ];
+      _providers = merged;
+      // Make sure custom ids keep incrementing past restored ones.
+      for (final p in _providers) {
+        if (p.id.startsWith('custom-')) {
+          final n = int.tryParse(p.id.split('-').last) ?? 0;
+          if (n > _customSeq) _customSeq = n;
+        }
+      }
+    } catch (_) {
+      // Corrupt payload — fall back to presets.
+    }
+  }
+
+  void _restoreAgents() {
+    final raw = _prefs?.getString(_kAgents);
+    if (raw == null) return;
+    try {
+      final list = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+      if (list.isEmpty) return;
+      final restored = list.map(AgentRuntime.fromJson).toList();
+      _agents
+        ..clear()
+        ..addAll(restored);
+    } catch (_) {/* keep presets */}
+  }
+
+  void _restoreEffects() {
+    final raw = _prefs?.getString(_kEffects);
+    if (raw == null) return;
+    try {
+      _effects = EffectParams.fromJson(
+        jsonDecode(raw) as Map<String, dynamic>,
+      );
+    } catch (_) {/* keep default */}
+  }
+
+  Future<void> _persistProviders() async {
+    try {
+      await _prefs?.setString(
+        _kProviders,
+        jsonEncode(_providers.map((p) => p.toJson()).toList()),
+      );
+    } catch (_) {/* ignore */}
+  }
+
+  Future<void> _persistAgents() async {
+    try {
+      await _prefs?.setString(
+        _kAgents,
+        jsonEncode(_agents.map((a) => a.toJson()).toList()),
+      );
+    } catch (_) {/* ignore */}
+  }
+
+  Future<void> _persistEffects() async {
+    try {
+      await _prefs?.setString(_kEffects, jsonEncode(_effects.toJson()));
+    } catch (_) {/* ignore */}
+  }
+}

@@ -12,6 +12,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   provider: 6.1.5+1
   shared_preferences: 2.5.3
+  http: 1.5.0
 
 dev_dependencies:
   flutter_test:
@@ -31,4 +32,14 @@ flutter:
         - asset: assets/fonts/JetBrainsMono-Medium.ttf
           weight: 500
         - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
+    # Glyph fallback. JetBrains Mono has no star, gear, hexagon or quarter-disc
+    # glyphs, and on the web there is no OS font to fall back to — missing
+    # characters render as tofu boxes. DejaVu Sans Mono covers nearly the whole
+    # Unicode geometric/technical block, so the terminal chrome always draws.
+    - family: MonoFallback
+      fonts:
+        - asset: assets/fonts/DejaVuSansMono.ttf
+          weight: 400
+        - asset: assets/fonts/DejaVuSansMono-Bold.ttf
           weight: 700
