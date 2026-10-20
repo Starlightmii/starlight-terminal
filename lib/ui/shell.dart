@@ -12,6 +12,7 @@ import 'screens/console_screen.dart';
 import 'screens/effects_screen.dart';
 import 'screens/keys_screen.dart';
 import 'screens/log_screen.dart';
+import 'screens/pi_screen.dart';
 import 'screens/sky_map_screen.dart';
 import 'widgets/chrome.dart';
 
@@ -32,6 +33,7 @@ class _StarlightShellState extends State<StarlightShell> {
     'map',
     'catalogue',
     'agents',
+    'pi',
     'keys',
     'effects',
     'log',
@@ -53,6 +55,9 @@ class _StarlightShellState extends State<StarlightShell> {
       'shader': 'effects',
       'agent': 'agents',
       'fleet': 'agents',
+      'earendil': 'pi',
+      'runtime': 'pi',
+      'models': 'pi',
     };
     final resolved = aliases[raw] ?? raw;
     final i = _tabNames.indexOf(resolved);
@@ -81,7 +86,7 @@ class _StarlightShellState extends State<StarlightShell> {
 
     final EffectParams fx = studio.effects;
     final effectVisible =
-        _tab != 5 && fx.kind != EffectKind.none && !term.reduceMotion;
+        _tab != 6 && fx.kind != EffectKind.none && !term.reduceMotion;
 
     return Scaffold(
       backgroundColor: palette.bg,
@@ -128,7 +133,7 @@ class _StarlightShellState extends State<StarlightShell> {
                               ),
                             ),
                             const SizedBox(height: 8),
-                            if (_tab != 7)
+                            if (_tab != 8)
                               Padding(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 10,
@@ -167,12 +172,14 @@ class _StarlightShellState extends State<StarlightShell> {
       case 3:
         return const AgentsScreen();
       case 4:
-        return const KeysScreen();
+        return const PiScreen();
       case 5:
-        return const EffectsScreen();
+        return const KeysScreen();
       case 6:
-        return const LogScreen();
+        return const EffectsScreen();
       case 7:
+        return const LogScreen();
+      case 8:
         return const SystemScreen();
       default:
         return const ConsoleScreen();

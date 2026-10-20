@@ -8,6 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/agent_runtime.dart';
 import '../core/effects.dart';
 import '../core/palette.dart';
+import '../core/pi_bridge.dart';
+import '../core/pi_connector.dart';
 import '../core/providers.dart';
 import 'terminal_controller.dart';
 
@@ -79,6 +81,76 @@ class StudioController extends ChangeNotifier implements CommandBridge {
   EffectParams _effects = const EffectParams();
   EffectParams get effects => _effects;
 
+  // ── Pi (real earendil-works/pi CLI via the bridge) ─────────────────────
+  final PiConnector pi = PiConnector();
+
+  /// True when the bridge answered and a `pi` binary was found.
+  bool get piOnline => pi.connected;
+
+  /// Models Pi reports, filtered by a query over id/provider/name.
+  List<PiModel> piModels([String query = '']) {
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) return pi.models;
+    return pi.models
+        .where((m) =>
+            m.id.toLowerCase().contains(q) ||
+            m.provider.toLowerCase().contains(q) ||
+            m.name.toLowerCase().contains(q))
+        .toList();
+  }
+
+  /// Bind an agent to Pi (or back to the local loop) and optionally pin a model.
+  void bindAgentToPi(String agentId, {bool enabled = true, String? model}) {
+    final a = agentById(agentId);
+    if (a == null) return;
+    a.engine = enabled ? AgentEngine.pi : AgentEngine.local;
+    if (model != null) a.piModel = model;
+    _persistAgents();
+    _notify();
+  }
+
+  /// Push every configured key into Pi's own auth.json so Pi can use them.
+  Future<Map<String, dynamic>> syncKeysToPi() async {
+    final entries = <String, String>{};
+    for (final p in _providers) {
+      if (p.kind == ProviderKind.llm &&
+          p.ready &&
+          p.looksPlausible) {
+        entries[piProviderId(p)] = p.apiKey.trim();
+      }
+    }
+    if (entries.isEmpty) {
+      return {'ok': false, 'error': 'no llm keys configured'};
+    }
+    final r = await pi.pushKeys(entries);
+    _notify();
+    return r;
+  }
+
+  /// Maps a vault provider to the provider id Pi uses internally.
+  static String piProviderId(Provider p) {
+    switch (p.id) {
+      case 'openai':
+        return 'openai';
+      case 'anthropic':
+        return 'anthropic';
+      case 'gemini':
+        return 'google';
+      case 'zai':
+        return 'zai';
+      case 'deepseek':
+        return 'deepseek';
+      case 'mistral':
+        return 'mistral';
+      case 'groq':
+        return 'groq';
+      case 'openrouter':
+        return 'openrouter';
+      default:
+        return p.id;
+    }
+  }
+
   // ── Internals ──────────────────────────────────────────────────────────
   SharedPreferences? _prefs;
   bool _disposed = false;
@@ -102,6 +174,11 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     _installLoop();
     // Let the console drive agents, keys and effects from the prompt.
     terminal.bridge = this;
+    // Attach the real Pi runtime. Failure only disables Pi-backed agents; the
+    // local loop and the whole TUI keep working.
+    pi.addListener(_notify);
+    _loop!.piRunner = pi.runAgentTurn;
+    unawaited(pi.connect());
     _notify();
   }
 
@@ -127,6 +204,8 @@ class StudioController extends ChangeNotifier implements CommandBridge {
   @override
   void dispose() {
     _disposed = true;
+    pi.removeListener(_notify);
+    pi.dispose();
     super.dispose();
   }
 

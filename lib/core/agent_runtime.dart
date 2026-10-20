@@ -11,6 +11,15 @@ import 'providers.dart';
 /// Status of one agent turn.
 enum AgentRunState { idle, thinking, toolCall, done, error, cancelled }
 
+/// Which runtime executes an agent's turns.
+enum AgentEngine {
+  /// This app's built-in loop with the sky-console tool catalogue.
+  local,
+
+  /// The real Pi CLI, reached through the bridge (Pi's own tools + models).
+  pi,
+}
+
 /// A message in an agent's conversation transcript.
 enum AgentRole { system, user, assistant, tool }
 
@@ -282,6 +291,8 @@ class AgentRuntime extends ChangeNotifier {
     required this.providerId,
     this.enabled = true,
     this.colorIndex = 0,
+    this.engine = AgentEngine.local,
+    this.piModel = '',
   });
 
   final String id;
@@ -290,6 +301,16 @@ class AgentRuntime extends ChangeNotifier {
   final String providerId;
   bool enabled;
   final int colorIndex;
+
+  /// Which runtime executes this agent's turns.
+  ///
+  /// [AgentEngine.pi] delegates to the real `pi` CLI over the bridge, so the
+  /// agent gets Pi's own tools (read/bash/edit/write), compaction, retry and
+  /// model catalog. [AgentEngine.local] uses this app's own loop.
+  AgentEngine engine;
+
+  /// `provider/model` Pi should use for this agent, e.g. `anthropic/…`.
+  String piModel;
 
   final List<AgentMessage> transcript = <AgentMessage>[];
   AgentRunState state = AgentRunState.idle;
@@ -343,6 +364,8 @@ class AgentRuntime extends ChangeNotifier {
         'providerId': providerId,
         'enabled': enabled,
         'colorIndex': colorIndex,
+        'engine': engine.name,
+        'piModel': piModel,
       };
 
   static AgentRuntime fromJson(Map<String, dynamic> j) => AgentRuntime(
@@ -352,6 +375,11 @@ class AgentRuntime extends ChangeNotifier {
         providerId: (j['providerId'] ?? '').toString(),
         enabled: j['enabled'] as bool? ?? true,
         colorIndex: (j['colorIndex'] as num?)?.toInt() ?? 0,
+        engine: AgentEngine.values.firstWhere(
+          (e) => e.name == j['engine'],
+          orElse: () => AgentEngine.local,
+        ),
+        piModel: (j['piModel'] ?? '').toString(),
       );
 }
 
@@ -379,6 +407,10 @@ class AgentLoop {
 
   final Map<String, bool> _cancelled = <String, bool>{};
 
+  /// Set by the studio when a Pi bridge is available. Returning null means
+  /// "no Pi", and agents fall back to the built-in loop.
+  PiRunner? piRunner;
+
   void cancel(String agentId) => _cancelled[agentId] = true;
 
   bool _isCancelled(String id) => _cancelled[id] ?? false;
@@ -395,6 +427,32 @@ class AgentLoop {
       text: task,
       createdAt: DateTime.now(),
     ));
+
+    // Pi first, when this agent is bound to it and the bridge answers.
+    if (agent.engine == AgentEngine.pi) {
+      final runner = piRunner;
+      if (runner != null) {
+        try {
+          await runner(agent, task, onEvent);
+          return;
+        } catch (e) {
+          agent.addMessage(AgentMessage(
+            role: AgentRole.system,
+            text: 'pi unavailable (${_shortError(e)}). '
+                'Falling back to the local loop.',
+          ));
+          onEvent(agent, AgentEvent(
+            kind: AgentEventKind.warn,
+            text: 'pi unavailable → local loop',
+          ));
+        }
+      } else {
+        agent.addMessage(AgentMessage(
+          role: AgentRole.system,
+          text: 'pi bridge not connected. Falling back to the local loop.',
+        ));
+      }
+    }
 
     final provider = providerFor(agent.providerId);
     final live = provider != null &&
@@ -730,6 +788,14 @@ class _ChatResponse {
   final int promptTokens;
   final int completionTokens;
 }
+
+/// Executes one agent turn on the real Pi CLI. Injected by the studio so the
+/// runtime does not import the bridge directly (keeps it testable).
+typedef PiRunner = Future<void> Function(
+  AgentRuntime agent,
+  String task,
+  void Function(AgentRuntime agent, AgentEvent event) onEvent,
+);
 
 enum AgentEventKind { thinking, tool, toolResult, message, done, warn, info }
 
