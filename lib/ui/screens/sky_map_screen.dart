@@ -5,7 +5,9 @@ import 'package:provider/provider.dart';
 
 import '../../core/catalogue.dart';
 import '../../core/console_engine.dart';
+import '../../core/memory.dart';
 import '../../core/palette.dart';
+import '../../state/studio_controller.dart';
 import '../../state/terminal_controller.dart';
 import '../widgets/chrome.dart';
 
@@ -16,6 +18,7 @@ class SkyMapScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final term = context.watch<TerminalController>();
+    final studio = context.watch<StudioController>();
     final palette = term.palette;
 
     return Column(
@@ -53,6 +56,7 @@ class SkyMapScreen extends StatelessWidget {
                             palette: palette,
                             selectedId: term.selectedStar?.id,
                             reducedMotion: term.reduceMotion,
+                            memories: studio.memory.anchored,
                           ),
                           child: const SizedBox.expand(),
                         ),
@@ -63,7 +67,107 @@ class SkyMapScreen extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         _selectedSheet(context, term, palette),
+        const SizedBox(height: 8),
+        _memoryStrip(studio, palette),
       ],
+    );
+  }
+
+  /// Memories anchored to a sky object, newest first, above the detail sheet.
+  Widget _memoryStrip(StudioController studio, Palette palette) {
+    final anchored = studio.memory.anchored;
+    final total = studio.memory.length;
+    return TermPanel(
+      palette: palette,
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'MEMORY ANCHORS',
+                style: TextStyle(
+                  fontFamily: 'Mono',
+                  fontSize: 8,
+                  letterSpacing: 1.2,
+                  fontWeight: FontWeight.w700,
+                  color: palette.dim,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${anchored.length} on map · $total stored',
+                style: TextStyle(
+                  fontFamily: 'Mono',
+                  fontSize: 8,
+                  color: palette.dim,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          if (anchored.isEmpty)
+            Text(
+              'chat with pi and mention a star to pin a memory to it',
+              style: TextStyle(
+                fontFamily: 'Mono',
+                fontSize: 8,
+                color: palette.dim.withValues(alpha: 0.8),
+              ),
+            )
+          else
+            SizedBox(
+              height: 26,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: anchored.length,
+                itemBuilder: (context, i) {
+                  final m = anchored[i];
+                  final star = m.starId;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: Row(
+                      children: [
+                        Text(
+                          '★',
+                          style: TextStyle(
+                            fontFamily: 'Mono',
+                            fontSize: 8,
+                            color: palette.warn,
+                          ),
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          (star ?? '').toUpperCase(),
+                          style: TextStyle(
+                            fontFamily: 'Mono',
+                            fontSize: 8,
+                            color: palette.bright,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 160),
+                          child: Text(
+                            m.text,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontFamily: 'Mono',
+                              fontSize: 8,
+                              color: palette.dim,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -264,12 +368,16 @@ class _SkyMapPainter extends CustomPainter {
     required this.palette,
     required this.selectedId,
     required this.reducedMotion,
+    this.memories = const <Memory>[],
   });
 
   final List<Star> stars;
   final Palette palette;
   final String? selectedId;
   final bool reducedMotion;
+
+  /// Memories anchored to a star, drawn as halos around that star.
+  final List<Memory> memories;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -280,6 +388,7 @@ class _SkyMapPainter extends CustomPainter {
     _drawGrid(canvas, center, radius);
     _drawHorizonLabels(canvas, center, radius);
     _drawStars(canvas, center, radius);
+    _drawMemories(canvas, center, radius);
     _drawZenith(canvas, center);
   }
 
@@ -450,10 +559,43 @@ class _SkyMapPainter extends CustomPainter {
     tp.paint(canvas, at);
   }
 
+  /// Halos around stars that carry memories, sized by how many are attached.
+  void _drawMemories(Canvas canvas, Offset center, double radius) {
+    if (memories.isEmpty) return;
+    final counts = <String, int>{};
+    for (final m in memories) {
+      final id = m.starId;
+      if (id == null || id.isEmpty) continue;
+      counts[id] = (counts[id] ?? 0) + 1;
+    }
+    for (final s in stars) {
+      final n = counts[s.id];
+      if (n == null || s.altitude <= 0) continue;
+      final pos = _project(s, center, radius);
+      final r = 4.0 + math.min(n, 6) * 1.6;
+      canvas.drawCircle(
+        pos,
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1
+          ..color = palette.warn.withValues(alpha: 0.55),
+      );
+      canvas.drawCircle(
+        pos,
+        r * 2.1,
+        Paint()
+          ..color = palette.warn.withValues(alpha: 0.07)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+      );
+    }
+  }
+
   @override
   bool shouldRepaint(covariant _SkyMapPainter old) =>
       old.palette != palette ||
       old.selectedId != selectedId ||
       old.reducedMotion != reducedMotion ||
-      old.stars != stars;
+      old.stars != stars ||
+      old.memories.length != memories.length;
 }

@@ -43,10 +43,96 @@ class _AgentsScreenState extends State<AgentsScreen> {
       children: [
         _briefBar(studio, palette),
         const SizedBox(height: 8),
+        _schedulerBar(studio, palette),
+        const SizedBox(height: 8),
         Expanded(child: _fleetList(studio, palette)),
         const SizedBox(height: 8),
         _eventFeed(studio, palette),
       ],
+    );
+  }
+
+  /// Autonomous-run status: heartbeat, armed count, recent firings.
+  Widget _schedulerBar(StudioController studio, Palette palette) {
+    final sch = studio.scheduler;
+    final armed = sch.armedCount;
+    final last = sch.history.isEmpty ? null : sch.history.first;
+
+    return TermPanel(
+      palette: palette,
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+      child: Row(
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: sch.enabled ? palette.ok : palette.dim,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            'SCHEDULER',
+            style: TextStyle(
+              fontFamily: 'Mono',
+              fontSize: 8,
+              letterSpacing: 1.2,
+              fontWeight: FontWeight.w700,
+              color: palette.bright,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            sch.enabled ? 'running' : 'paused',
+            style: TextStyle(
+              fontFamily: 'Mono',
+              fontSize: 8,
+              color: sch.enabled ? palette.ok : palette.dim,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '$armed armed',
+            style: TextStyle(
+              fontFamily: 'Mono',
+              fontSize: 8,
+              color: armed > 0 ? palette.warn : palette.dim,
+            ),
+          ),
+          if (last != null) ...[
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'last: ${last.agentName.toLowerCase()} ${last.ageLabel}',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: 'Mono',
+                  fontSize: 8,
+                  color: palette.dim,
+                ),
+              ),
+            ),
+          ],
+          const Spacer(),
+          InkWell(
+            onTap: () {
+              sch.setEnabled(!sch.enabled);
+              setState(() {});
+            },
+            child: Text(
+              sch.enabled ? 'PAUSE' : 'RESUME',
+              style: TextStyle(
+                fontFamily: 'Mono',
+                fontSize: 7.5,
+                letterSpacing: 0.9,
+                fontWeight: FontWeight.w700,
+                color: palette.bright,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -302,9 +388,278 @@ class _AgentsScreenState extends State<AgentsScreen> {
               ),
             ),
           ],
+          const SizedBox(height: 5),
+          _scheduleRow(studio, palette, agent),
         ],
       ),
     );
+  }
+
+  /// Autonomous-run controls: arm/disarm, interval, standing task, run now.
+  Widget _scheduleRow(
+    StudioController studio,
+    Palette palette,
+    AgentRuntime agent,
+  ) {
+    final next = studio.scheduler.nextDueIn(agent);
+    final due = studio.scheduler.isDue(agent);
+    final armed = agent.autoRun && agent.task.trim().isNotEmpty;
+
+    return Container(
+      padding: const EdgeInsets.only(top: 5),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: palette.line)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              InkWell(
+                onTap: () {
+                  final newTask = agent.task.trim().isEmpty
+                      ? 'Survey what is visible and summarise the sky.'
+                      : agent.task;
+                  studio.setAgentSchedule(
+                    agent.id,
+                    autoRun: !agent.autoRun,
+                    task: newTask,
+                  );
+                  setState(() {});
+                },
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: armed ? palette.ok : palette.line,
+                    ),
+                    color: armed
+                        ? palette.ok.withValues(alpha: 0.1)
+                        : Colors.transparent,
+                  ),
+                  child: Text(
+                    armed ? '⟳ AUTO ON' : '⟳ AUTO OFF',
+                    style: TextStyle(
+                      fontFamily: 'Mono',
+                      fontSize: 7,
+                      letterSpacing: 0.8,
+                      fontWeight: FontWeight.w700,
+                      color: armed ? palette.ok : palette.dim,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 5),
+              _intervalStepper(studio, palette, agent),
+              const SizedBox(width: 5),
+              InkWell(
+                onTap: () => _editTask(studio, palette, agent),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration:
+                      BoxDecoration(border: Border.all(color: palette.line)),
+                  child: Text(
+                    agent.task.trim().isEmpty ? 'SET TASK' : 'EDIT TASK',
+                    style: TextStyle(
+                      fontFamily: 'Mono',
+                      fontSize: 7,
+                      letterSpacing: 0.8,
+                      fontWeight: FontWeight.w700,
+                      color: palette.mid,
+                    ),
+                  ),
+                ),
+              ),
+              const Spacer(),
+              InkWell(
+                onTap: () async {
+                  if (agent.task.trim().isEmpty) {
+                    await _editTask(studio, palette, agent);
+                    return;
+                  }
+                  await studio.runAgentNow(agent.id);
+                  if (mounted) setState(() {});
+                },
+                child: Text(
+                  'RUN NOW',
+                  style: TextStyle(
+                    fontFamily: 'Mono',
+                    fontSize: 7,
+                    letterSpacing: 0.8,
+                    fontWeight: FontWeight.w700,
+                    color: palette.bright,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (agent.task.trim().isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(
+              '⟳ ${_oneLine(agent.task)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'Mono',
+                fontSize: 8,
+                color: palette.dim,
+              ),
+            ),
+          ],
+          const SizedBox(height: 2),
+          Text(
+            armed
+                ? (due
+                    ? 'due now · ${agent.autoRuns} runs'
+                    : 'next in ${_shortDuration(next)} · ${agent.autoRuns} runs')
+                : 'manual only · ${agent.autoRuns} auto runs',
+            style: TextStyle(
+              fontFamily: 'Mono',
+              fontSize: 7.5,
+              color: armed && due ? palette.warn : palette.dim,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _intervalStepper(
+    StudioController studio,
+    Palette palette,
+    AgentRuntime agent,
+  ) {
+    const stops = [5, 15, 30, 60, 180, 360, 720, 1440];
+    return Container(
+      decoration: BoxDecoration(border: Border.all(color: palette.line)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            onTap: () {
+              final i = stops.indexOf(agent.everyMinutes);
+              final next = i <= 0 ? stops.first : stops[i - 1];
+              studio.setAgentSchedule(agent.id, everyMinutes: next);
+              setState(() {});
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Text(
+                '−',
+                style: TextStyle(
+                  fontFamily: 'Mono',
+                  fontSize: 9,
+                  color: palette.mid,
+                ),
+              ),
+            ),
+          ),
+          Text(
+            _shortMinutes(agent.everyMinutes),
+            style: TextStyle(
+              fontFamily: 'Mono',
+              fontSize: 7,
+              fontWeight: FontWeight.w700,
+              color: palette.mid,
+            ),
+          ),
+          InkWell(
+            onTap: () {
+              final i = stops.indexOf(agent.everyMinutes);
+              final next = i < 0 || i >= stops.length - 1
+                  ? stops.last
+                  : stops[i + 1];
+              studio.setAgentSchedule(agent.id, everyMinutes: next);
+              setState(() {});
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Text(
+                '+',
+                style: TextStyle(
+                  fontFamily: 'Mono',
+                  fontSize: 9,
+                  color: palette.mid,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _shortMinutes(int m) {
+    if (m >= 1440) return '24h';
+    if (m >= 60) return '${m ~/ 60}h';
+    return '${m}m';
+  }
+
+  String _shortDuration(Duration? d) {
+    if (d == null) return '—';
+    if (d.inHours >= 1) {
+      final m = d.inMinutes % 60;
+      return '${d.inHours}h${m == 0 ? '' : '${m}m'}';
+    }
+    return '${d.inMinutes}m';
+  }
+
+  Future<void> _editTask(
+    StudioController studio,
+    Palette palette,
+    AgentRuntime agent,
+  ) async {
+    final ctrl = TextEditingController(text: agent.task);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: palette.panel,
+        title: Text(
+          'STANDING TASK · ${agent.name}',
+          style: TextStyle(
+            fontFamily: 'Mono',
+            fontSize: 12,
+            color: palette.bright,
+          ),
+        ),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLines: 4,
+          style: TextStyle(
+            fontFamily: 'Mono',
+            fontSize: 11,
+            color: palette.bright,
+          ),
+          decoration: InputDecoration(
+            hintText: 'what should this agent do on every run?',
+            hintStyle: TextStyle(
+              fontFamily: 'Mono',
+              fontSize: 10,
+              color: palette.dim,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('CANCEL',
+                style: TextStyle(fontFamily: 'Mono', color: palette.dim)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text),
+            child: Text('SAVE',
+                style: TextStyle(fontFamily: 'Mono', color: palette.bright)),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (result == null) return;
+    studio.setAgentSchedule(agent.id, task: result.trim());
+    if (mounted) setState(() {});
   }
 
   String _oneLine(String s) {

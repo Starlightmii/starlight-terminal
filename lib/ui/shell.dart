@@ -7,10 +7,10 @@ import '../state/studio_controller.dart';
 import '../state/terminal_controller.dart';
 import 'screens/agents_screen.dart';
 import 'screens/boot_screen.dart';
-import 'screens/catalogue_screen.dart';
 import 'screens/console_screen.dart';
 import 'screens/effects_screen.dart';
 import 'screens/keys_screen.dart';
+import 'screens/sessions_screen.dart';
 import 'screens/log_screen.dart';
 import 'screens/pi_screen.dart';
 import 'screens/sky_map_screen.dart';
@@ -31,7 +31,7 @@ class _StarlightShellState extends State<StarlightShell> {
   static const List<String> _tabNames = [
     'console',
     'map',
-    'catalogue',
+    'sessions',
     'agents',
     'pi',
     'keys',
@@ -45,8 +45,10 @@ class _StarlightShellState extends State<StarlightShell> {
     final raw = Uri.base.queryParameters['tab']?.toLowerCase();
     if (raw == null) return 0;
     final aliases = <String, String>{
-      'catalog': 'catalogue',
-      'stars': 'catalogue',
+      'catalog': 'sessions',
+      'stars': 'sessions',
+      'sessions': 'sessions',
+      'journal': 'sessions',
       'notes': 'log',
       'settings': 'system',
       'api': 'keys',
@@ -168,7 +170,7 @@ class _StarlightShellState extends State<StarlightShell> {
       case 1:
         return const SkyMapScreen();
       case 2:
-        return const CatalogueScreen();
+        return const SessionsScreen();
       case 3:
         return const AgentsScreen();
       case 4:

@@ -208,7 +208,7 @@ class TermNavBar extends StatelessWidget {
   static const List<({String label, String glyph})> tabs = [
     (label: 'CONSOLE', glyph: '❯'),
     (label: 'MAP', glyph: '◎'),
-    (label: 'STARS', glyph: '★'),
+    (label: 'SESSIONS', glyph: '▤'),
     (label: 'AGENTS', glyph: '◈'),
     (label: 'PI', glyph: 'π'),
     (label: 'KEYS', glyph: '⌂'),
@@ -474,6 +474,123 @@ class SystemScreen extends StatelessWidget {
                 fontSize: 11,
                 color: palette.mid,
               ),
+            ),
+          ),
+        ]),
+        _section(palette, 'RUNTIME', [
+          _row(
+            palette,
+            'pi bridge',
+            Text(
+              studio.pi.connected
+                  ? 'online · ${studio.pi.status.versionLabel}'
+                  : 'offline · ${studio.pi.baseUrl}',
+              style: TextStyle(
+                fontFamily: 'Mono',
+                fontSize: 11,
+                color: studio.pi.connected ? palette.ok : palette.err,
+              ),
+            ),
+          ),
+          _row(
+            palette,
+            'agents',
+            Text(
+              '${studio.agents.where((a) => a.enabled).length} enabled · '
+              '${studio.scheduler.armedCount} scheduled',
+              style: TextStyle(
+                fontFamily: 'Mono',
+                fontSize: 11,
+                color: palette.mid,
+              ),
+            ),
+          ),
+          _row(
+            palette,
+            'scheduler',
+            _switch(
+              palette,
+              studio.scheduler.enabled,
+              () => studio.scheduler.setEnabled(!studio.scheduler.enabled),
+              onLabel: 'ON',
+              offLabel: 'OFF',
+            ),
+          ),
+          _row(
+            palette,
+            'auto-update',
+            _switch(
+              palette,
+              studio.pi.autoUpdate,
+              () => studio.pi.setAutoUpdate(!studio.pi.autoUpdate),
+              onLabel: '6H',
+              offLabel: 'OFF',
+            ),
+          ),
+        ]),
+        _section(palette, 'DATA', [
+          _row(
+            palette,
+            'sessions',
+            Text(
+              '${studio.sessions.all.length} stored · '
+              '${studio.sessions.stats['messages']} messages',
+              style: TextStyle(
+                fontFamily: 'Mono',
+                fontSize: 11,
+                color: palette.mid,
+              ),
+            ),
+          ),
+          _row(
+            palette,
+            'memories',
+            Text(
+              '${studio.memory.length} / ${studio.memory.capacity}',
+              style: TextStyle(
+                fontFamily: 'Mono',
+                fontSize: 11,
+                color: palette.mid,
+              ),
+            ),
+          ),
+          _row(
+            palette,
+            'log lines',
+            Text(
+              '${studio.appLog.length} / ${studio.appLog.capacity}',
+              style: TextStyle(
+                fontFamily: 'Mono',
+                fontSize: 11,
+                color: palette.mid,
+              ),
+            ),
+          ),
+          _row(
+            palette,
+            'actions',
+            Wrap(
+              spacing: 5,
+              runSpacing: 5,
+              children: [
+                _miniButton(palette, 'CLEAR LOG', studio.appLog.clear),
+                _miniButton(
+                  palette,
+                  'CLEAR MEMORY',
+                  studio.memory.clear,
+                ),
+                _miniButton(
+                  palette,
+                  'CLEAR SESSIONS',
+                  studio.sessions.clearAll,
+                ),
+                _miniButton(
+                  palette,
+                  'WIPE ALL',
+                  () => studio.wipeAllData(),
+                  accent: true,
+                ),
+              ],
             ),
           ),
         ]),

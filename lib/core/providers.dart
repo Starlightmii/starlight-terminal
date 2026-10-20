@@ -162,6 +162,91 @@ class Provider {
 /// Built-in provider presets. Keys are intentionally blank — the user pastes
 /// their own into the KEYS panel or `keys set`.
 abstract final class ProviderPresets {
+  /// Known-good model ids per preset, offered as one-tap picks in the KEYS
+  /// panel. Free/local options are marked in [freeModels].
+  static const Map<String, List<String>> modelSuggestions = {
+    'openai': [
+      'gpt-4o-mini',
+      'gpt-4o',
+      'gpt-4.1-mini',
+      'gpt-4.1',
+      'o4-mini',
+    ],
+    'anthropic': [
+      'claude-sonnet-4-5',
+      'claude-opus-4-5',
+      'claude-haiku-4-5',
+      'claude-3-5-sonnet',
+    ],
+    'groq': [
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+      'mixtral-8x7b-32768',
+      'gemma2-9b-it',
+    ],
+    'openrouter': [
+      'anthropic/claude-3.5-sonnet',
+      'google/gemini-2.0-flash-exp:free',
+      'meta-llama/llama-3.3-70b-instruct:free',
+      'deepseek/deepseek-r1:free',
+      'qwen/qwen-2.5-72b-instruct:free',
+    ],
+    'deepseek': [
+      'deepseek-chat',
+      'deepseek-reasoner',
+    ],
+    'mistral': [
+      'mistral-large-latest',
+      'mistral-small-latest',
+      'open-mistral-nemo',
+    ],
+    'together': [
+      'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+      'Qwen/Qwen2.5-72B-Instruct-Turbo',
+      'mistralai/Mixtral-8x7B-Instruct-v0.1',
+    ],
+    'ollama': [
+      'llama3.1',
+      'qwen2.5',
+      'mistral',
+      'phi4',
+      'deepseek-r1',
+    ],
+    'gemini': [
+      'gemini-2.0-flash',
+      'gemini-2.0-flash-lite',
+      'gemini-1.5-pro',
+    ],
+    'zai': [
+      'glm-4-plus',
+      'glm-4-flash',
+      'glm-4-air',
+    ],
+    'stability': ['sd3.5-large', 'sd3-large', 'core'],
+    'replicate': ['black-forest-labs/flux-schnell', 'stability-ai/sdxl'],
+    'runway': ['gen-4-turbo', 'gen-3-alpha'],
+  };
+
+  /// Model ids that cost nothing to call (local inference or `:free` tier).
+  static const Set<String> freeModels = {
+    'llama3.1',
+    'qwen2.5',
+    'mistral',
+    'phi4',
+    'deepseek-r1',
+    'gemma2-9b-it',
+    'llama-3.1-8b-instant',
+    'google/gemini-2.0-flash-exp:free',
+    'meta-llama/llama-3.3-70b-instruct:free',
+    'deepseek/deepseek-r1:free',
+    'qwen/qwen-2.5-72b-instruct:free',
+    'glm-4-flash',
+    'gemini-2.0-flash-lite',
+  };
+
+  static List<String> suggestionsFor(String providerId) =>
+      modelSuggestions[providerId] ?? const <String>[];
+
   static const List<Provider> all = <Provider>[
     // ── LLM ────────────────────────────────────────────────────────────
     Provider(

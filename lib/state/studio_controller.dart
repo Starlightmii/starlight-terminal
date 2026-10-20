@@ -6,11 +6,15 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/agent_runtime.dart';
+import '../core/agent_scheduler.dart';
+import '../core/app_log.dart';
 import '../core/effects.dart';
+import '../core/memory.dart';
 import '../core/palette.dart';
 import '../core/pi_bridge.dart';
 import '../core/pi_connector.dart';
 import '../core/providers.dart';
+import '../core/session_store.dart';
 import 'terminal_controller.dart';
 
 /// How a multi-agent run is coordinated.
@@ -151,6 +155,88 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     }
   }
 
+  // ── Memory, sessions, logs, scheduling ─────────────────────────────────
+
+  /// Everything the operator has learned, across every chat surface.
+  final MemoryStore memory = MemoryStore();
+
+  /// Every conversation: pi, bots and autonomous jobs.
+  late final SessionStore sessions = SessionStore(memories: memory);
+
+  /// The app-wide log tail shown by the LOG tab.
+  final AppLog appLog = AppLog();
+
+  late final AgentScheduler scheduler = AgentScheduler(
+    agentsProvider: () => _agents,
+    runner: (agent, task) => runScheduled(agent, task),
+  );
+
+  /// Mirror agent transcript traffic into the log and the active job session.
+  void _mirrorAgentEvent(AgentRuntime agent, AgentEvent event) {
+    switch (event.kind) {
+      case AgentEventKind.tool:
+        appLog.tool(event.text, scope: agent.name.toLowerCase());
+      case AgentEventKind.warn:
+        appLog.warn(event.text, scope: agent.name.toLowerCase());
+      case AgentEventKind.info:
+        appLog.info(event.text, scope: agent.name.toLowerCase());
+      case AgentEventKind.done:
+        appLog.info('done · ${event.text}', scope: agent.name.toLowerCase());
+      case AgentEventKind.message:
+      case AgentEventKind.toolResult:
+        appLog.info(event.text, scope: agent.name.toLowerCase());
+      case AgentEventKind.thinking:
+        appLog.debug(event.text, scope: agent.name.toLowerCase());
+    }
+  }
+
+  /// Run a scheduled agent and file the result as a job session.
+  Future<void> runScheduled(AgentRuntime agent, String task) async {
+    final s = sessions.create(
+      kind: SessionKind.job,
+      title: '${agent.name.toLowerCase()} · ${task.split('\n').first}',
+      agentId: agent.id,
+      tags: const ['scheduled'],
+    );
+    sessions.appendMessage(s.id, SessionMessage(
+      role: 'you',
+      text: task,
+      at: DateTime.now(),
+    ));
+    appLog.info('scheduled run: ${agent.name}', scope: 'scheduler');
+    await runAgent(agent.id, task);
+    final tail = agent.transcript.isEmpty ? null : agent.transcript.last;
+    if (tail != null) {
+      sessions.appendMessage(
+        s.id,
+        SessionMessage(
+          role: 'agent',
+          text: tail.text,
+          at: DateTime.now(),
+          isError: agent.state == AgentRunState.error,
+        ),
+        remember: true,
+      );
+    }
+    sessions.appendMessage(s.id, SessionMessage(
+      role: 'sys',
+      text: 'run finished · ${agent.state.name}',
+      at: DateTime.now(),
+    ));
+  }
+
+  /// Remove every persisted artifact this app owns.
+  Future<void> wipeAllData() async {
+    sessions.clearAll();
+    memory.clear();
+    appLog.clear();
+    scheduler.clearHistory();
+    _prefs?.remove(_kSessions);
+    _prefs?.remove(_kMemories);
+    appLog.warn('all local data wiped', scope: 'system');
+    _notify();
+  }
+
   // ── Internals ──────────────────────────────────────────────────────────
   SharedPreferences? _prefs;
   bool _disposed = false;
@@ -159,6 +245,8 @@ class StudioController extends ChangeNotifier implements CommandBridge {
   static const _kProviders = 'starlight.providers.v1';
   static const _kAgents = 'starlight.agents.v1';
   static const _kEffects = 'starlight.effects.v1';
+  static const _kSessions = 'starlight.sessions.v1';
+  static const _kMemories = 'starlight.memories.v1';
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -168,6 +256,7 @@ class StudioController extends ChangeNotifier implements CommandBridge {
       _restoreProviders();
       _restoreAgents();
       _restoreEffects();
+      _restoreJournal();
     } catch (_) {
       // Persistence is optional; the studio works in-memory regardless.
     }
@@ -178,8 +267,41 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     // local loop and the whole TUI keep working.
     pi.addListener(_notify);
     _loop!.piRunner = pi.runAgentTurn;
+    memory.addListener(_notify);
+    sessions.addListener(_notify);
+    appLog.info('studio online · ${_agents.length} agents', scope: 'system');
+    // Autonomous runs: one heartbeat for the fleet.
+    scheduler.start();
     unawaited(pi.connect());
     _notify();
+  }
+
+  /// Persist sessions and memories. Called on a debounce from the listeners.
+  Timer? _saveTimer;
+
+  void _scheduleSave() {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(seconds: 2), _saveJournal);
+  }
+
+  void _saveJournal() {
+    final p = _prefs;
+    if (p == null) return;
+    try {
+      p.setString(_kSessions, sessions.encode());
+      p.setString(_kMemories, memory.encode());
+    } catch (e) {
+      appLog.error('persist failed: $e', scope: 'system');
+    }
+  }
+
+  void _restoreJournal() {
+    final p = _prefs;
+    if (p == null) return;
+    memory.loadEncoded(p.getString(_kMemories));
+    sessions.loadEncoded(p.getString(_kSessions));
+    sessions.addListener(_scheduleSave);
+    memory.addListener(_scheduleSave);
   }
 
   void _installLoop() {
@@ -204,6 +326,9 @@ class StudioController extends ChangeNotifier implements CommandBridge {
   @override
   void dispose() {
     _disposed = true;
+    _saveTimer?.cancel();
+    _saveJournal();
+    scheduler.dispose();
     pi.removeListener(_notify);
     pi.dispose();
     super.dispose();
@@ -284,15 +409,39 @@ class StudioController extends ChangeNotifier implements CommandBridge {
   void bindAgent(String agentId, String providerId) {
     final a = agentById(agentId);
     if (a == null) return;
-    _agents[_agents.indexOf(a)] = AgentRuntime(
-      id: a.id,
-      name: a.name,
-      persona: a.persona,
-      providerId: providerId,
-      enabled: a.enabled,
-      colorIndex: a.colorIndex,
+    // Mutate in place: replacing the object would throw away the transcript,
+    // the Pi binding and the schedule the operator configured.
+    a.providerId = providerId;
+    _persistAgents();
+    _notify();
+  }
+
+  /// Arm or disarm an agent's autonomous schedule.
+  void setAgentSchedule(
+    String agentId, {
+    bool? autoRun,
+    int? everyMinutes,
+    String? task,
+  }) {
+    final a = agentById(agentId);
+    if (a == null) return;
+    if (autoRun != null) a.autoRun = autoRun;
+    if (everyMinutes != null) a.everyMinutes = everyMinutes.clamp(1, 1440);
+    if (task != null) a.task = task;
+    appLog.info(
+      '${a.name.toLowerCase()} schedule '
+      '${a.autoRun ? 'armed every ${a.everyMinutes}m' : 'disarmed'}',
+      scope: 'scheduler',
     );
     _persistAgents();
+    _notify();
+  }
+
+  /// Fire one agent right now, outside its schedule.
+  Future<void> runAgentNow(String agentId, {String? task}) async {
+    final a = agentById(agentId);
+    if (a == null) return;
+    await scheduler.runNow(a, task: task);
     _notify();
   }
 
@@ -334,6 +483,7 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     _feedAuthor = agent.name;
     _feed.add(event);
     if (_feed.length > 200) _feed.removeRange(0, _feed.length - 200);
+    _mirrorAgentEvent(agent, event);
     _notify();
   }
 
@@ -342,6 +492,7 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     final agent = agentById(agentId);
     final loop = _loop;
     if (agent == null || loop == null || task.trim().isEmpty) return;
+    appLog.info(task, scope: agent.name.toLowerCase());
     await loop.run(agent, task.trim());
     _notify();
   }

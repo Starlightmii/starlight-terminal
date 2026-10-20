@@ -338,6 +338,53 @@ class _KeysScreenState extends State<KeysScreen> {
                     hint: 'model id',
                     onChanged: (v) => studio.setModel(p.id, v),
                   ),
+                  if (ProviderPresets.suggestionsFor(p.id).isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: [
+                        for (final m
+                            in ProviderPresets.suggestionsFor(p.id))
+                          InkWell(
+                            onTap: () {
+                              studio.setModel(p.id, m);
+                              setState(() {});
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: p.model == m
+                                      ? palette.bright
+                                      : palette.line,
+                                ),
+                                color: p.model == m
+                                    ? palette.bright.withValues(alpha: 0.1)
+                                    : Colors.transparent,
+                              ),
+                              child: Text(
+                                ProviderPresets.freeModels.contains(m)
+                                    ? '$m ·free'
+                                    : m,
+                                style: TextStyle(
+                                  fontFamily: 'Mono',
+                                  fontSize: 7,
+                                  color: p.model == m
+                                      ? palette.bright
+                                      : (ProviderPresets.freeModels.contains(m)
+                                          ? palette.ok
+                                          : palette.dim),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 5),
                   _field(
                     palette,

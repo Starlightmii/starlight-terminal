@@ -64,6 +64,30 @@ class PiConnector extends ChangeNotifier {
 
   bool get connected => _status.reachable && _status.installed != null;
 
+  /// `provider/model` the operator picked for the interactive terminal.
+  /// Empty means "let pi use whatever it defaults to".
+  String _selectedModel = '';
+  String get selectedModel => _selectedModel;
+
+  /// Pin a model on the Pi side and remember it for the next session.
+  Future<void> selectModel(String qualifiedId) async {
+    final id = qualifiedId.trim();
+    if (id.isEmpty) return;
+    _selectedModel = id;
+    notifyListeners();
+    if (!connected) return;
+    try {
+      await _ensureSession();
+      final slash = id.indexOf('/');
+      final provider = slash < 0 ? '' : id.substring(0, slash);
+      final modelId = slash < 0 ? id : id.substring(slash + 1);
+      await _client.setModel(_sessionId, provider: provider, modelId: modelId);
+    } catch (e) {
+      _lastError = _short(e);
+      notifyListeners();
+    }
+  }
+
   List<String> get providers => _status.providers;
 
   /// Providers for which Pi has a credential. Matches Pi's own provider ids.
@@ -259,6 +283,30 @@ class PiConnector extends ChangeNotifier {
   }
 
   // ── running a turn on real Pi ──────────────────────────────────────────
+
+  /// A direct conversation turn, for the PI tab's chat surface.
+  ///
+  /// Unlike [runAgentTurn] this does not go through an [AgentRuntime]; it
+  /// streams straight into the caller's transcript. That keeps the interactive
+  /// terminal honest — what you type is exactly what Pi receives.
+  Stream<PiEvent> converse(String message) async* {
+    if (!connected) {
+      throw StateError(
+        'pi bridge is not connected — start it with: node /home/user/pi-bridge/server.mjs',
+      );
+    }
+    await _ensureSession();
+    _busy = true;
+    _activity = 'pi is working';
+    notifyListeners();
+    try {
+      yield* _client.prompt(_sessionId, message);
+    } finally {
+      _busy = false;
+      _activity = '';
+      notifyListeners();
+    }
+  }
 
   Future<void> _ensureSession() async {
     if (_sessionOpen) return;

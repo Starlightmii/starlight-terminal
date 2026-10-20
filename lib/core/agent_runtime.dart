@@ -298,7 +298,10 @@ class AgentRuntime extends ChangeNotifier {
   final String id;
   final String name;
   final String persona;
-  final String providerId;
+
+  /// Which vault provider this agent prefers. Mutable so rebinding keeps the
+  /// transcript and schedule intact.
+  String providerId;
   bool enabled;
   final int colorIndex;
 
@@ -311,6 +314,21 @@ class AgentRuntime extends ChangeNotifier {
 
   /// `provider/model` Pi should use for this agent, e.g. `anthropic/…`.
   String piModel;
+
+  /// A standing instruction the scheduler replays on every automatic run.
+  String task = '';
+
+  /// Automatic runs are opt-in per agent.
+  bool autoRun = false;
+
+  /// Minutes between automatic runs. Clamped by [AgentScheduler].
+  int everyMinutes = 30;
+
+  /// Last time the scheduler fired this agent.
+  DateTime? lastAutoRun;
+
+  /// Total automatic runs, for the AGENTS panel.
+  int autoRuns = 0;
 
   final List<AgentMessage> transcript = <AgentMessage>[];
   AgentRunState state = AgentRunState.idle;
@@ -366,6 +384,12 @@ class AgentRuntime extends ChangeNotifier {
         'colorIndex': colorIndex,
         'engine': engine.name,
         'piModel': piModel,
+        'task': task,
+        'autoRun': autoRun,
+        'everyMinutes': everyMinutes,
+        'autoRuns': autoRuns,
+        if (lastAutoRun != null)
+          'lastAutoRun': lastAutoRun!.millisecondsSinceEpoch,
       };
 
   static AgentRuntime fromJson(Map<String, dynamic> j) => AgentRuntime(
@@ -380,7 +404,16 @@ class AgentRuntime extends ChangeNotifier {
           orElse: () => AgentEngine.local,
         ),
         piModel: (j['piModel'] ?? '').toString(),
-      );
+      )
+        ..task = (j['task'] ?? '').toString()
+        ..autoRun = j['autoRun'] as bool? ?? false
+        ..everyMinutes = (j['everyMinutes'] as num?)?.toInt() ?? 30
+        ..autoRuns = (j['autoRuns'] as num?)?.toInt() ?? 0
+        ..lastAutoRun = j['lastAutoRun'] == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(
+                (j['lastAutoRun'] as num).toInt(),
+              );
 }
 
 /// The agent loop. Mirrors Pi's architecture: build context, ask the model,
