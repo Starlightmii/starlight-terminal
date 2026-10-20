@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Starlight Terminal — a starlit TUI console for sky observing. Live sidereal clock, 40-star catalogue, polar sky chart and an offline observing log.">
+  <meta name="theme-color" content="#020705">
+
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Starlight">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="manifest" href="manifest.json">
+
+  <title>Starlight Terminal</title>
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #020705;
+      overflow: hidden;
+    }
+    /* Pre-boot screen: avoids a white flash before Flutter paints. */
+    #boot-veil {
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(circle at 50% 45%, #05170e 0%, #020705 65%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+      color: #7cffc4;
+      transition: opacity 500ms ease;
+      z-index: 10;
+    }
+    #boot-veil.gone { opacity: 0; pointer-events: none; }
+    #boot-veil .mark {
+      font-size: 13px;
+      letter-spacing: 6px;
+      margin-bottom: 18px;
+      opacity: 0.9;
+    }
+    #boot-veil .bar {
+      width: 180px;
+      height: 1px;
+      background: #0e3b27;
+      position: relative;
+      overflow: hidden;
+    }
+    #boot-veil .bar::after {
+      content: "";
+      position: absolute;
+      left: -40%;
+      top: 0;
+      width: 40%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, #7cffc4, transparent);
+      animation: sweep 1.4s linear infinite;
+    }
+    @keyframes sweep {
+      to { left: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div id="boot-veil">
+    <div class="mark">ST★RLIGHT</div>
+    <div class="bar"></div>
+  </div>
+
+  <script src="flutter_bootstrap.js" async></script>
+  <script>
+    // Lift the veil once Flutter has had a chance to paint its first frame.
+    window.addEventListener('flutter-first-frame', function () {
+      var veil = document.getElementById('boot-veil');
+      if (!veil) return;
+      veil.classList.add('gone');
+      setTimeout(function () { veil.remove(); }, 600);
+    });
+    // Safety net in case the event never fires.
+    setTimeout(function () {
+      var veil = document.getElementById('boot-veil');
+      if (veil) { veil.classList.add('gone'); veil.remove(); }
+    }, 6000);
+  </script>
+</body>
+</html>
