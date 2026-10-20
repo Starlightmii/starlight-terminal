@@ -78,6 +78,24 @@ class Provider {
   /// The chat-completions endpoint for this provider.
   Uri get chatEndpoint => Uri.parse('$baseUrl/chat/completions');
 
+  /// The provider id pi uses in its own `auth.json` / catalog.
+  ///
+  /// These are pi's ids, not ours: pi keys credentials by provider, so the
+  /// mapping has to be exact or the key is written where pi will not read it.
+  String get piProviderId => switch (id) {
+        'openai' => 'openai',
+        'anthropic' => 'anthropic',
+        'gemini' => 'google',
+        'groq' => 'groq',
+        'openrouter' => 'openrouter',
+        'deepseek' => 'deepseek',
+        'mistral' => 'mistral',
+        'together' => 'together',
+        'zai' => 'zai',
+        'ollama' => 'ollama',
+        _ => id,
+      };
+
   /// Image generation endpoint (OpenAI-compatible `/images/generations`).
   Uri get imageEndpoint => Uri.parse('$baseUrl/images/generations');
 

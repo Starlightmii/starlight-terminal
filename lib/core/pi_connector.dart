@@ -270,7 +270,7 @@ class PiConnector extends ChangeNotifier {
     ));
 
     // Persist the model choice on the Pi side when the agent pins one.
-    final cursor = await _client.prompt(_sessionId, _promptFor(agent, task));
+    final cursor = await _client.startPrompt(_sessionId, _promptFor(agent, task));
 
     var at = cursor;
     var idlePolls = 0;

@@ -29,6 +29,12 @@ class PiModel {
 
   bool get acceptsImages => input.contains('image');
 
+  /// `provider/id`, the form pi itself accepts for `--model`.
+  String get qualifiedId => '$provider/$id';
+
+  /// Alias kept for the PI panel's model rows.
+  bool get supportsImages => acceptsImages;
+
   String get shortContext {
     final w = contextWindow;
     if (w == null) return '—';
@@ -76,6 +82,9 @@ class PiStatus {
   final String? error;
 
   bool get isInstalled => installed != null && installed!.isNotEmpty;
+
+  /// Short label for status pills, e.g. `pi 1.3.0`.
+  String get versionLabel => isInstalled ? 'pi $installed' : 'pi not found';
   bool get hasAuth => providers.isNotEmpty;
 
   static const PiStatus offline = PiStatus(error: 'pi bridge not running');
@@ -132,6 +141,7 @@ class PiEvent {
     required this.type,
     required this.raw,
     this.toolName,
+    this.toolArgs,
     this.text,
     this.isError = false,
   });
@@ -139,8 +149,69 @@ class PiEvent {
   final String type;
   final Map<String, dynamic> raw;
   final String? toolName;
+  final String? toolArgs;
   final String? text;
   final bool isError;
+
+  // ── Narrowed accessors ────────────────────────────────────────────────
+  // Pi's wire records are heterogeneous; these pull the handful of fields the
+  // terminal cares about so callers never index the raw map by hand.
+
+  /// Assistant text carried by this event, when it carries any.
+  String? get messageText {
+    final body = raw['message'];
+    if (body is Map) {
+      final t = _messagePreview(body);
+      return t.isEmpty ? null : t;
+    }
+    final d = raw['assistantMessageEvent'];
+    if (d is Map) {
+      final delta = d['delta'];
+      if (delta != null && delta.toString().isNotEmpty) return delta.toString();
+    }
+    return null;
+  }
+
+  /// Streaming text delta from `message_update`.
+  String? get textDelta {
+    final d = raw['assistantMessageEvent'];
+    if (d is Map && d['type'] == 'text_delta') {
+      final v = d['delta'];
+      return v?.toString();
+    }
+    return null;
+  }
+
+  /// Streaming reasoning delta from `message_update`.
+  String? get thinkingDelta {
+    final d = raw['assistantMessageEvent'];
+    if (d is Map && d['type'] == 'thinking_delta') {
+      final v = d['delta'];
+      return v?.toString();
+    }
+    return null;
+  }
+
+  int get inputTokens {
+    final usage = _usage;
+    return (usage?['input'] as num?)?.toInt() ?? 0;
+  }
+
+  int get outputTokens {
+    final usage = _usage;
+    return (usage?['output'] as num?)?.toInt() ?? 0;
+  }
+
+  Map? get _usage {
+    final direct = raw['usage'];
+    if (direct is Map) return direct;
+    final m = raw['message'];
+    if (m is Map) {
+      final u = m['usage'];
+      if (u is Map) return u;
+    }
+    return null;
+  }
 
   /// A single human-readable line for the terminal transcript.
   String get summary {
@@ -230,6 +301,7 @@ class PiEvent {
       type: type,
       raw: j,
       toolName: j['toolName']?.toString(),
+      toolArgs: PiEvent._compactArgs(j['args']),
       text: j['error']?.toString(),
       isError: isError,
     );
@@ -465,6 +537,85 @@ class PiBridgeClient {
     }
   }
 
+  /// Alias used by the connector.
+  Future<PiVersionInfo> checkVersion() => version();
+
+  /// Push keys into pi's auth.json and report the resulting provider list.
+  Future<Map<String, dynamic>> pushKeys(Map<String, String> byProvider) async {
+    try {
+      final providers = await syncAuth(byProvider);
+      return {'ok': true, 'providers': providers};
+    } catch (e) {
+      return {'ok': false, 'error': PiBridgeException.hint(e)};
+    }
+  }
+
+  /// Register a compatible endpoint and report the outcome.
+  Future<Map<String, dynamic>> registerEndpoint({
+    required String provider,
+    required String baseUrl,
+    required String model,
+    String? apiKey,
+    String name = '',
+  }) async {
+    try {
+      await registerProvider(
+        provider: provider,
+        baseUrl: baseUrl,
+        model: model,
+        apiKey: apiKey,
+        name: name.isEmpty ? provider : name,
+      );
+      return {'ok': true, 'provider': provider};
+    } catch (e) {
+      return {'ok': false, 'error': PiBridgeException.hint(e)};
+    }
+  }
+
+  /// Start a prompt without consuming its stream, returning the replay cursor.
+  ///
+  /// Pair with [poll] when the caller wants to drive its own loop instead of
+  /// awaiting [prompt]'s stream.
+  Future<int> startPrompt(String sessionId, String message) async {
+    final accepted = await _postJson(
+      '/sessions/$sessionId/prompt',
+      {'message': message},
+      timeout: const Duration(seconds: 90),
+    );
+    if (accepted['ok'] == false) {
+      throw PiBridgeException(
+        (accepted['error'] ?? 'prompt rejected').toString(),
+        jsonEncode(accepted),
+      );
+    }
+    return (accepted['cursor'] as num?)?.toInt() ?? 0;
+  }
+
+  /// Read one page of buffered events from [since].
+  Future<PiEventPage> poll(
+    String sessionId,
+    int since, {
+    Duration wait = const Duration(seconds: 20),
+  }) async {
+    final j = await _getJson(
+      '/sessions/$sessionId/events',
+      query: {'since': '$since', 'wait': '${wait.inMilliseconds}'},
+      timeout: wait + const Duration(seconds: 20),
+    );
+    return PiEventPage(
+      events: ((j['events'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => PiEvent.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+      cursor: (j['cursor'] as num?)?.toInt() ?? since,
+      settled: j['settled'] == true,
+      alive: j['alive'] != false,
+    );
+  }
+
+  /// Abort whatever session is streaming (connector-facing alias).
+  Future<void> cancel(String sessionId) => abort(sessionId);
+
   Future<void> closeSession(String sessionId) async {
     try {
       await _http
@@ -538,4 +689,20 @@ class PiBridgeException implements Exception {
 
   @override
   String toString() => 'PiBridgeException($message)';
+}
+
+/// One page of buffered pi events, returned by [PiBridgeClient.poll].
+@immutable
+class PiEventPage {
+  const PiEventPage({
+    required this.events,
+    required this.cursor,
+    required this.settled,
+    required this.alive,
+  });
+
+  final List<PiEvent> events;
+  final int cursor;
+  final bool settled;
+  final bool alive;
 }
