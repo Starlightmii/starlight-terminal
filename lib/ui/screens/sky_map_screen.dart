@@ -56,7 +56,7 @@ class SkyMapScreen extends StatelessWidget {
                             palette: palette,
                             selectedId: term.selectedStar?.id,
                             reducedMotion: term.reduceMotion,
-                            memories: studio.memory.anchored,
+                            memories: studio.memory.all,
                           ),
                           child: const SizedBox.expand(),
                         ),
@@ -77,6 +77,7 @@ class SkyMapScreen extends StatelessWidget {
   Widget _memoryStrip(StudioController studio, Palette palette) {
     final anchored = studio.memory.anchored;
     final total = studio.memory.length;
+    final plotted = total;
     return TermPanel(
       palette: palette,
       padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
@@ -97,7 +98,7 @@ class SkyMapScreen extends StatelessWidget {
               ),
               const Spacer(),
               Text(
-                '${anchored.length} on map · $total stored',
+                '$plotted plotted · ${anchored.length} pinned · $total stored',
                 style: TextStyle(
                   fontFamily: 'Mono',
                   fontSize: 8,
@@ -109,7 +110,7 @@ class SkyMapScreen extends StatelessWidget {
           const SizedBox(height: 3),
           if (anchored.isEmpty)
             Text(
-              'chat with pi and mention a star to pin a memory to it',
+              'memories from pi and bot chats plot automatically · anchor one to a star to pin it',
               style: TextStyle(
                 fontFamily: 'Mono',
                 fontSize: 8,
@@ -560,13 +561,22 @@ class _SkyMapPainter extends CustomPainter {
   }
 
   /// Halos around stars that carry memories, sized by how many are attached.
+  ///
+  /// Memories that were never explicitly anchored to a sky object still need a
+  /// home — otherwise every memory captured from a pi/bot chat would be stored
+  /// but invisible here. Those are placed on a deterministic star (derived from
+  /// the memory id) so the constellation is stable across rebuilds.
   void _drawMemories(Canvas canvas, Offset center, double radius) {
-    if (memories.isEmpty) return;
+    if (memories.isEmpty || stars.isEmpty) return;
     final counts = <String, int>{};
+    final up = stars.where((s) => s.altitude > 0).toList();
+    if (up.isEmpty) return;
     for (final m in memories) {
       final id = m.starId;
-      if (id == null || id.isEmpty) continue;
-      counts[id] = (counts[id] ?? 0) + 1;
+      final target = (id != null && id.isNotEmpty)
+          ? id
+          : up[m.id.hashCode.abs() % up.length].id;
+      counts[target] = (counts[target] ?? 0) + 1;
     }
     for (final s in stars) {
       final n = counts[s.id];
