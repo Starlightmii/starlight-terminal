@@ -537,27 +537,27 @@ class TerminalController extends ChangeNotifier {
   void _printStarSheet(Star s) {
     final above = s.altitude > 0;
     print(ruleLine(s.name.toUpperCase(), 54), tone: Tone.heading, glow: true);
-    print('  ${pad('Bayer', 12)}${s.bayer}');
-    print('  ${pad('Constellation', 12)}${s.constellation}');
+    print('  ${pad('Bayer', 15)}${s.bayer}');
+    print('  ${pad('Constellation', 15)}${s.constellation}');
     print(
-      '  ${pad('RA / Dec', 12)}${fmtRa(s.raHours)}  ${fmtDec(s.decDegrees)}',
+      '  ${pad('RA / Dec', 15)}${fmtRa(s.raHours)}  ${fmtDec(s.decDegrees)}',
     );
     print(
-      '  ${pad('Magnitude', 12)}${fmtMag(s.magnitude)}  '
+      '  ${pad('Magnitude', 15)}${fmtMag(s.magnitude)}  '
       '${meter(1 - ((s.magnitude + 1.5) / 4.0), width: 10)}',
     );
-    print('  ${pad('Spectral', 12)}${s.spectral}');
-    print('  ${pad('Distance', 12)}${fmtDistance(s.distanceLy)}');
+    print('  ${pad('Spectral', 15)}${s.spectral}');
+    print('  ${pad('Distance', 15)}${fmtDistance(s.distanceLy)}');
     print(ruleLine('', 54), tone: Tone.line);
 
     print(
-      '  ${pad('Altitude', 12)}${s.altitude.toStringAsFixed(2)}°  '
+      '  ${pad('Altitude', 15)}${s.altitude.toStringAsFixed(2)}°  '
       '${meter(s.altitude / 90.0, width: 14)}  '
       '${above ? 'above horizon' : 'below horizon'}',
       tone: above ? Tone.ok : Tone.dim,
     );
     print(
-      '  ${pad('Azimuth', 12)}${s.azimuth.toStringAsFixed(1)}°  '
+      '  ${pad('Azimuth', 15)}${s.azimuth.toStringAsFixed(1)}°  '
       '(${compassPoint(s.azimuth)})',
     );
     print('');
