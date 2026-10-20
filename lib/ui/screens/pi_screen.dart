@@ -30,9 +30,12 @@ class _PiScreenState extends State<PiScreen> {
   String _filter = '';
   bool _showCatalog = false;
   bool _showRuntime = true;
-  String? _streamingId;
   bool _sending = false;
   int _streamed = 0;
+
+  /// True once this turn produced streaming text, so the trailing
+  /// `message_end` body does not duplicate it.
+  bool _sawDelta = false;
 
   @override
   void dispose() {
@@ -65,7 +68,7 @@ class _PiScreenState extends State<PiScreen> {
     setState(() {
       _sending = true;
       _streamed = 0;
-      _streamingId = session.id;
+      _sawDelta = false;
     });
     _snapToBottom();
 
@@ -88,7 +91,6 @@ class _PiScreenState extends State<PiScreen> {
       if (mounted) {
         setState(() {
           _sending = false;
-          _streamingId = null;
         });
       }
       _snapToBottom();
@@ -103,10 +105,7 @@ class _PiScreenState extends State<PiScreen> {
       case 'text_delta':
         final chunk = e.deltaText;
         if (chunk.isEmpty) return;
-        if (_streamingId == null) {
-          // Start a fresh assistant bubble.
-          _streamed = session.messages.length;
-        }
+        _sawDelta = true;
         _streamed += chunk.length;
         studio.sessions.appendMessage(
           session.id,
@@ -151,13 +150,16 @@ class _PiScreenState extends State<PiScreen> {
         );
       case 'message':
         final t = (e.text ?? '').trim();
-        if (t.isNotEmpty) {
-          studio.sessions.appendMessage(
-            session.id,
-            SessionMessage(role: 'pi', text: t, at: DateTime.now()),
-            remember: true,
-          );
-        }
+        if (t.isEmpty) return;
+        // If the turn already streamed deltas, message_end repeats the whole
+        // answer — appending it would double the text. Only use it when nothing
+        // streamed (non-streaming provider, or a turn that produced no deltas).
+        if (_sawDelta && !e.isError) return;
+        studio.sessions.appendMessage(
+          session.id,
+          SessionMessage(role: 'pi', text: t, at: DateTime.now()),
+          remember: true,
+        );
     }
   }
 

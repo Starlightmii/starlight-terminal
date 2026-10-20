@@ -362,12 +362,33 @@ class PiEvent {
         (m?['stopReason'] == 'error') ||
         (j['isError'] == true) ||
         (j['error'] != null && type == 'bridge_error');
+
+    // pi reports a failed turn on message_end as
+    // `message.stopReason == 'error'` + `message.errorMessage`, NOT as a
+    // top-level `error` field. Without this the transcript would show an empty
+    // bubble for a provider failure, which is the least useful thing it could
+    // do. Fall through the three shapes pi actually uses.
+    final errorText = j['error']?.toString() ??
+        m?['errorMessage']?.toString() ??
+        (j['assistantMessageEvent'] is Map
+            ? ((j['assistantMessageEvent'] as Map)['error']?.toString() ??
+                (j['assistantMessageEvent'] as Map)['message']?.toString())
+            : null);
+
+    // The bridge flattens assistant text onto message_end. For error turns use
+    // the error message; otherwise prefer the body so a non-streaming turn
+    // still renders.
+    final body = m?['text']?.toString();
+    final chosen = isError
+        ? (errorText ?? body)
+        : (body == null || body.trim().isEmpty ? errorText : body);
+
     return PiEvent(
       type: type,
       raw: j,
       toolName: j['toolName']?.toString(),
       toolArgs: PiEvent._compactArgs(j['args']),
-      text: j['error']?.toString(),
+      text: chosen,
       isError: isError,
     );
   }
