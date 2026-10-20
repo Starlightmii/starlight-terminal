@@ -20,9 +20,17 @@ const String kDefaultPiBridgeUrl = String.fromEnvironment(
 /// event feed, and drives the auto-update path (`pi update`, model catalog
 /// refresh, version probe).
 class PiConnector extends ChangeNotifier {
-  PiConnector({String baseUrl = kDefaultPiBridgeUrl})
-      : _baseUrl = baseUrl,
-        _client = PiBridgeClient(baseUrl: baseUrl);
+  /// [baseUrl] defaults to the platform-correct origin.
+  ///
+  /// This used to default to the sandbox's `127.0.0.1:5077`, which is only
+  /// reachable from the same machine. On web the page is served over HTTPS
+  /// from a public host, so that URL is both the wrong machine and blocked as
+  /// mixed content — the fleet would sit offline no matter what the bridge
+  /// did. [PiBridgeClient.defaultBaseUrl] resolves to `<origin>/pi` on web and
+  /// falls back to the local bridge elsewhere (e.g. Android on a LAN).
+  PiConnector({String? baseUrl})
+      : _baseUrl = baseUrl ?? PiBridgeClient.defaultBaseUrl,
+        _client = PiBridgeClient(baseUrl: baseUrl ?? PiBridgeClient.defaultBaseUrl);
 
   String _baseUrl;
   PiBridgeClient _client;
@@ -56,6 +64,16 @@ class PiConnector extends ChangeNotifier {
   bool autoUpdate = true;
   Duration autoUpdateInterval = const Duration(hours: 6);
   Timer? _autoTimer;
+
+  /// Background reconnect.
+  ///
+  /// The bridge is a separate process. It can be restarting, or simply not up
+  /// yet when the page loads. Probing once was enough to strand the whole Pi
+  /// surface offline until a manual refresh, so an unreachable bridge now
+  /// retries on a slow timer until it answers, then stops.
+  Timer? _reconnectTimer;
+  static const Duration _reconnectEvery = Duration(seconds: 10);
+  bool _probing = false;
 
   final String _sessionId = 'starlight-fleet';
   String get sessionId => _sessionId;
@@ -96,11 +114,25 @@ class PiConnector extends ChangeNotifier {
   // ── connection ─────────────────────────────────────────────────────────
 
   Future<void> connect({bool probeUpdate = true}) async {
-    _busy = true;
-    _activity = 'connecting to pi bridge';
-    _setBusy(true);
+    await _probe(probeUpdate: probeUpdate, silent: false);
+  }
+
+  /// Reconnect quietly, without flipping the UI into a busy state.
+  ///
+  /// Safe to call on a timer: it never overlaps itself and is a no-op once the
+  /// bridge answers.
+  Future<void> _probe({bool probeUpdate = false, bool silent = true}) async {
+    if (_probing) return;
+    _probing = true;
+    if (!silent) {
+      _busy = true;
+      _activity = 'connecting to pi bridge';
+      _setBusy(true);
+    }
+    var reachable = false;
     try {
       _status = await _client.status();
+      reachable = _status.reachable;
       if (_status.reachable) {
         _lastError = null;
         try {
@@ -114,11 +146,36 @@ class PiConnector extends ChangeNotifier {
       } else {
         _lastError = _status.error ?? 'bridge unreachable';
       }
+    } catch (e) {
+      _lastError = _short(e);
     } finally {
-      _activity = '';
-      _setBusy(false);
+      _probing = false;
+      if (!silent) {
+        _activity = '';
+        _setBusy(false);
+      }
+    }
+    // Keep retrying only while the bridge is actually missing.
+    if (reachable) {
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
+    } else {
+      _restartReconnectTimer();
     }
     _restartAutoTimer();
+    notifyListeners();
+  }
+
+  void _restartReconnectTimer() {
+    if (_reconnectTimer != null) return;
+    _reconnectTimer = Timer.periodic(_reconnectEvery, (_) {
+      if (connected) {
+        _reconnectTimer?.cancel();
+        _reconnectTimer = null;
+        return;
+      }
+      unawaited(_probe(silent: true));
+    });
   }
 
   void setBaseUrl(String url) {
@@ -291,8 +348,14 @@ class PiConnector extends ChangeNotifier {
   /// terminal honest — what you type is exactly what Pi receives.
   Stream<PiEvent> converse(String message) async* {
     if (!connected) {
+      // One last chance before complaining: the bridge may have come back
+      // since the last probe.
+      await _probe(silent: true);
+    }
+    if (!connected) {
       throw StateError(
-        'pi bridge is not connected — start it with: node /home/user/pi-bridge/server.mjs',
+        'pi bridge is not reachable at $baseUrl — '
+        'start it with: node /home/user/pi-bridge/server.mjs',
       );
     }
     await _ensureSession();
@@ -322,7 +385,10 @@ class PiConnector extends ChangeNotifier {
     void Function(AgentRuntime agent, AgentEvent event) onEvent,
   ) async {
     if (!connected) {
-      throw StateError('pi bridge is not connected');
+      await _probe(silent: true);
+    }
+    if (!connected) {
+      throw StateError('pi bridge is not reachable at $baseUrl');
     }
     await _ensureSession();
 
@@ -476,6 +542,7 @@ class PiConnector extends ChangeNotifier {
   @override
   void dispose() {
     _autoTimer?.cancel();
+    _reconnectTimer?.cancel();
     _client.dispose();
     super.dispose();
   }

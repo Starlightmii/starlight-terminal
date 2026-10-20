@@ -287,16 +287,39 @@ class _PiScreenState extends State<PiScreen> {
           ),
           if (!pi.connected) ...[
             const SizedBox(height: 5),
-            Text(
-              pi.lastError ??
-                  'bridge unreachable — start it with: '
-                      'node /home/user/pi-bridge/server.mjs',
-              style: TextStyle(
-                fontFamily: 'Mono',
-                fontSize: 8.5,
-                height: 1.35,
-                color: palette.err,
-              ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    pi.lastError ??
+                        'bridge unreachable — start it with: '
+                            'node /home/user/pi-bridge/server.mjs',
+                    style: TextStyle(
+                      fontFamily: 'Mono',
+                      fontSize: 8.5,
+                      height: 1.35,
+                      color: palette.err,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                // Retrying happens on its own every 10s; this is the impatient
+                // path, and it also proves the bridge is genuinely gone.
+                GestureDetector(
+                  onTap: pi.busy ? null : () => studio.pi.connect(),
+                  child: Text(
+                    pi.busy ? '…' : 'RETRY',
+                    style: TextStyle(
+                      fontFamily: 'Mono',
+                      fontSize: 8.5,
+                      letterSpacing: 1.1,
+                      fontWeight: FontWeight.w700,
+                      color: palette.warn,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
           const SizedBox(height: 6),
