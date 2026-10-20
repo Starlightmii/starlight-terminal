@@ -98,6 +98,45 @@ class _KeysScreenState extends State<KeysScreen> {
                     color: palette.dim,
                   ),
                 ),
+                const SizedBox(height: 6),
+                InkWell(
+                  onTap: () async {
+                    final r = await studio.syncKeysToPi();
+                    if (!mounted) return;
+                    final ok = r['ok'] == true;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          ok
+                              ? 'pushed ${r['pushed'] ?? 0} keys to pi'
+                              : 'pi sync failed: ${r['error'] ?? 'unreachable'}',
+                        ),
+                        duration: const Duration(seconds: 3),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: palette.bright.withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: Text(
+                      '⇪ SYNC TO PI',
+                      style: TextStyle(
+                        fontFamily: 'Mono',
+                        fontSize: 8,
+                        letterSpacing: 1.1,
+                        fontWeight: FontWeight.w700,
+                        color: palette.bright,
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),

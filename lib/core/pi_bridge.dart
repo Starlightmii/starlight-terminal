@@ -38,22 +38,25 @@ class PiModel {
   String get shortContext {
     final w = contextWindow;
     if (w == null) return '—';
-    if (w >= 1000000) return '${(w / 1000000).toStringAsFixed(w % 1000000 == 0 ? 0 : 1)}M';
+    if (w >= 1000000) {
+      return '${(w / 1000000).toStringAsFixed(w % 1000000 == 0 ? 0 : 1)}M';
+    }
     if (w >= 1000) return '${(w / 1000).round()}k';
     return '$w';
   }
 
   static PiModel fromJson(Map<String, dynamic> j) => PiModel(
-        id: (j['id'] ?? '').toString(),
-        name: (j['name'] ?? j['id'] ?? '').toString(),
-        provider: (j['provider'] ?? '').toString(),
-        api: (j['api'] ?? '').toString(),
-        reasoning: j['reasoning'] == true,
-        input: (j['input'] as List?)?.map((e) => e.toString()).toList() ??
-            const ['text'],
-        contextWindow: (j['contextWindow'] as num?)?.toInt(),
-        maxTokens: (j['maxTokens'] as num?)?.toInt(),
-      );
+    id: (j['id'] ?? '').toString(),
+    name: (j['name'] ?? j['id'] ?? '').toString(),
+    provider: (j['provider'] ?? '').toString(),
+    api: (j['api'] ?? '').toString(),
+    reasoning: j['reasoning'] == true,
+    input:
+        (j['input'] as List?)?.map((e) => e.toString()).toList() ??
+        const ['text'],
+    contextWindow: (j['contextWindow'] as num?)?.toInt(),
+    maxTokens: (j['maxTokens'] as num?)?.toInt(),
+  );
 }
 
 /// Pi's install/version state, as probed from the bridge.
@@ -90,17 +93,21 @@ class PiStatus {
   static const PiStatus offline = PiStatus(error: 'pi bridge not running');
 
   static PiStatus fromJson(Map<String, dynamic> j) => PiStatus(
-        installed: j['installed']?.toString(),
-        node: j['node']?.toString(),
-        nodeOk: j['nodeOk'] == true,
-        providers: (j['providers'] as List?)?.map((e) => e.toString()).toList() ??
-            const [],
-        modelCount: (j['modelCount'] as num?)?.toInt() ?? 0,
-        agentDir: (j['agentDir'] ?? '').toString(),
-        sessions: (j['sessions'] as num?)?.toInt() ?? 0,
-        reachable: j['ok'] == true,
-      );
+    installed: j['installed']?.toString(),
+    node: j['node']?.toString(),
+    nodeOk: j['nodeOk'] == true,
+    providers:
+        (j['providers'] as List?)?.map((e) => e.toString()).toList() ??
+        const [],
+    modelCount: (j['modelCount'] as num?)?.toInt() ?? 0,
+    agentDir: (j['agentDir'] ?? '').toString(),
+    sessions: (j['sessions'] as num?)?.toInt() ?? 0,
+    reachable: j['ok'] == true,
+  );
 }
+
+/// Alias kept for the PI panel: a version comparison result.
+typedef PiUpdateCheck = PiVersionInfo;
 
 /// Result of comparing the installed CLI with the npm registry.
 @immutable
@@ -121,13 +128,23 @@ class PiVersionInfo {
   final String relation;
   final String? error;
 
+  /// One-line description for the PI panel.
+  String get summary {
+    if (error != null && error!.isNotEmpty) return 'version probe failed: $error';
+    if (installed == null) return 'pi not installed';
+    if (latest == null) return 'pi $installed (upstream unknown)';
+    if (updateAvailable) return 'pi $installed → $latest available';
+    if (relation == 'ahead') return 'pi $installed (ahead of npm $latest)';
+    return 'pi $installed is current';
+  }
+
   static PiVersionInfo fromJson(Map<String, dynamic> j) => PiVersionInfo(
-        installed: j['installed']?.toString(),
-        latest: j['latest']?.toString(),
-        updateAvailable: j['updateAvailable'] == true,
-        relation: (j['relation'] ?? 'unknown').toString(),
-        error: j['error']?.toString(),
-      );
+    installed: j['installed']?.toString(),
+    latest: j['latest']?.toString(),
+    updateAvailable: j['updateAvailable'] == true,
+    relation: (j['relation'] ?? 'unknown').toString(),
+    error: j['error']?.toString(),
+  );
 }
 
 /// One event emitted by pi during a run.
@@ -213,6 +230,54 @@ class PiEvent {
     return null;
   }
 
+  /// Normalised event kind.
+  ///
+  /// pi emits streaming detail nested inside `message_update` and tool activity
+  /// under `tool_execution_*`. Consumers that only need "something streamed" or
+  /// "a tool started" read this instead of digging into [raw]. The raw record
+  /// is always available, so nothing is lost.
+  String get kind {
+    switch (type) {
+      case 'message_update':
+        final ev = raw['assistantMessageEvent'];
+        if (ev is Map) {
+          switch (ev['type']) {
+            case 'text_delta':
+              return 'text_delta';
+            case 'thinking_delta':
+            case 'thinking_start':
+              return 'thinking_delta';
+            case 'toolcall_start':
+              return 'tool_start';
+            case 'toolcall_end':
+              return 'tool_end';
+            case 'error':
+              return 'error';
+          }
+        }
+        return 'update';
+      case 'tool_execution_start':
+        return 'tool_start';
+      case 'tool_execution_end':
+        return 'tool_end';
+      case 'tool_execution_update':
+        return 'tool_update';
+      case 'message_end':
+        return isError ? 'error' : 'message';
+      case 'bridge_error':
+        return 'error';
+      default:
+        return type;
+    }
+  }
+
+  /// Streaming text carried by this event, if any.
+  String get deltaText {
+    final ev = raw['assistantMessageEvent'];
+    if (ev is Map) return (ev['delta'] ?? '').toString();
+    return '';
+  }
+
   /// A single human-readable line for the terminal transcript.
   String get summary {
     switch (type) {
@@ -273,8 +338,7 @@ class PiEvent {
     return '';
   }
 
-  static String _flatten(String s) =>
-      s.replaceAll(RegExp(r'\s+'), ' ').trim();
+  static String _flatten(String s) => s.replaceAll(RegExp(r'\s+'), ' ').trim();
 
   static String _compactArgs(Object? args) {
     if (args == null) return '';
@@ -294,7 +358,8 @@ class PiEvent {
   static PiEvent fromJson(Map<String, dynamic> j) {
     final type = (j['type'] ?? '').toString();
     final m = j['message'] as Map?;
-    final isError = (m?['stopReason'] == 'error') ||
+    final isError =
+        (m?['stopReason'] == 'error') ||
         (j['isError'] == true) ||
         (j['error'] != null && type == 'bridge_error');
     return PiEvent(
@@ -316,8 +381,7 @@ class PiEvent {
 /// start a prompt; it is also unavailable on Android. Long-polling the same
 /// replay buffer works identically on web and mobile.
 class PiBridgeClient {
-  PiBridgeClient({String? baseUrl})
-      : baseUrl = baseUrl ?? defaultBaseUrl;
+  PiBridgeClient({String? baseUrl}) : baseUrl = baseUrl ?? defaultBaseUrl;
 
   /// On web, resolve against the page origin so a co-hosted proxy works.
   /// On Android, allow an explicit override or a LAN host.
@@ -335,7 +399,7 @@ class PiBridgeClient {
   final String baseUrl;
   final http.Client _http = http.Client();
 
-  static const Duration _connectTimeout = Duration(seconds: 6);
+  static const Duration _connectTimeout = Duration(seconds: 8);
 
   Uri _u(String path, [Map<String, String>? query]) =>
       Uri.parse('$baseUrl$path').replace(queryParameters: query);
@@ -347,9 +411,9 @@ class PiBridgeClient {
     Map<String, String>? query,
     Duration? timeout,
   }) async {
-    final res = await _http.get(_u(path, query), headers: {
-      'accept': 'application/json',
-    }).timeout(timeout ?? _connectTimeout);
+    final res = await _http
+        .get(_u(path, query), headers: {'accept': 'application/json'})
+        .timeout(timeout ?? _connectTimeout);
     if (res.statusCode >= 400) {
       throw PiBridgeException('HTTP ${res.statusCode}', res.body);
     }
@@ -365,14 +429,16 @@ class PiBridgeClient {
     Map<String, dynamic> body, {
     Duration? timeout,
   }) async {
-    final res = await _http.post(
-      _u(path),
-      headers: {
-        'content-type': 'application/json',
-        'accept': 'application/json',
-      },
-      body: jsonEncode(body),
-    ).timeout(timeout ?? const Duration(seconds: 60));
+    final res = await _http
+        .post(
+          _u(path),
+          headers: {
+            'content-type': 'application/json',
+            'accept': 'application/json',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(timeout ?? const Duration(seconds: 60));
     if (res.statusCode >= 400) {
       throw PiBridgeException('HTTP ${res.statusCode}', res.body);
     }
@@ -383,11 +449,12 @@ class PiBridgeClient {
     return decoded;
   }
 
+  // ── probing ────────────────────────────────────────────────────────────
+
   /// True when the bridge process is up and `pi` is on PATH.
   Future<PiStatus> status() async {
     try {
-      final j = await _getJson('/status');
-      return PiStatus.fromJson(j);
+      return PiStatus.fromJson(await _getJson('/status'));
     } catch (e) {
       return PiStatus(error: _msg(e));
     }
@@ -395,12 +462,16 @@ class PiBridgeClient {
 
   Future<PiVersionInfo> version() async {
     try {
-      final j = await _getJson('/version', timeout: const Duration(seconds: 20));
-      return PiVersionInfo.fromJson(j);
+      return PiVersionInfo.fromJson(
+        await _getJson('/version', timeout: const Duration(seconds: 25)),
+      );
     } catch (e) {
       return PiVersionInfo(error: _msg(e));
     }
   }
+
+  /// Alias used by the connector: version probe with a typed result.
+  Future<PiVersionInfo> checkVersion() => version();
 
   /// Models from pi's live catalog (cached server-side for 60s).
   Future<List<PiModel>> models({bool refresh = false}) async {
@@ -416,6 +487,8 @@ class PiBridgeClient {
         .toList();
   }
 
+  // ── keys / endpoints ───────────────────────────────────────────────────
+
   /// Write API keys into pi's own `~/.pi/agent/auth.json`.
   ///
   /// [entries] maps a pi provider id (e.g. `openai`) to a raw key. An empty
@@ -425,6 +498,16 @@ class PiBridgeClient {
     return ((j['providers'] as List?) ?? const [])
         .map((e) => e.toString())
         .toList();
+  }
+
+  /// Alias used by the connector: write keys into pi's `auth.json`.
+  Future<Map<String, dynamic>> pushKeys(Map<String, String> byProvider) async {
+    try {
+      final providers = await syncAuth(byProvider);
+      return {'ok': true, 'providers': providers};
+    } catch (e) {
+      return {'ok': false, 'error': _msg(e)};
+    }
   }
 
   /// Register a custom OpenAI-compatible endpoint in `models.json`.
@@ -442,29 +525,56 @@ class PiBridgeClient {
       'model': model,
       'api': api,
       if (apiKey != null && apiKey.isNotEmpty) 'apiKey': apiKey,
-      if (name != null) 'name': name,
+      if (name != null && name.isNotEmpty) 'name': name,
     });
   }
 
+  /// Alias used by the connector: register a custom endpoint in `models.json`.
+  Future<Map<String, dynamic>> registerEndpoint({
+    required String provider,
+    required String baseUrl,
+    required String model,
+    String? apiKey,
+    String name = '',
+  }) async {
+    try {
+      await registerProvider(
+        provider: provider,
+        baseUrl: baseUrl,
+        model: model,
+        apiKey: apiKey,
+        name: name,
+      );
+      return {'ok': true, 'provider': provider};
+    } catch (e) {
+      return {'ok': false, 'error': _msg(e)};
+    }
+  }
+
+  // ── sessions ───────────────────────────────────────────────────────────
+
   /// Start a long-lived pi session. Returns the session id.
-  Future<String> openSession({String? name, Map<String, dynamic>? onState}) async {
+  Future<String> openSession({String? name}) async {
     final j = await _postJson(
-      '/sessions${name == null ? '' : '?name=${Uri.encodeQueryComponent(name)}'}',
+      '/sessions'
+      '${name == null ? '' : '?name=${Uri.encodeQueryComponent(name)}'}',
       const {},
-      timeout: const Duration(seconds: 40),
+      timeout: const Duration(seconds: 45),
     );
     final id = (j['sessionId'] ?? '').toString();
     if (id.isEmpty) throw PiBridgeException('no session id', jsonEncode(j));
     return id;
   }
 
-  /// Send an arbitrary allow-listed pi RPC command (set_model, compact, …).
+  /// Send an allow-listed pi RPC command (`set_model`, `compact`, …).
   Future<Map<String, dynamic>> command(
     String sessionId,
     Map<String, dynamic> payload,
-  ) =>
-      _postJson('/sessions/$sessionId/command', payload,
-          timeout: const Duration(seconds: 60));
+  ) => _postJson(
+    '/sessions/$sessionId/command',
+    payload,
+    timeout: const Duration(seconds: 60),
+  );
 
   /// Select the model pi should use for this session.
   Future<bool> setModel(
@@ -480,108 +590,14 @@ class PiBridgeClient {
     return j['ok'] == true;
   }
 
-  /// Submit a prompt and stream pi's events until the run settles.
+  /// Submit a prompt and return the cursor *before* any of its records.
   ///
-  /// The POST itself returns as soon as pi accepts the prompt; events are then
-  /// long-polled from the replay buffer, which means no event can be missed
-  /// even if the first records land before the POST resolves.
-  Stream<PiEvent> prompt(String sessionId, String message) async* {
-    final accepted = await _postJson(
-      '/sessions/$sessionId/prompt',
-      {'message': message},
-      timeout: const Duration(seconds: 90),
-    );
-    if (accepted['ok'] == false) {
-      throw PiBridgeException(
-        (accepted['error'] ?? 'prompt rejected').toString(),
-        jsonEncode(accepted),
-      );
-    }
-
-    var cursor = (accepted['cursor'] as num?)?.toInt() ?? 0;
-
-    // Poll until pi reports the session settled. A generous cap keeps a wedged
-    // provider from pinning the UI forever; pi's own abort is the fast path.
-    final deadline = DateTime.now().add(const Duration(minutes: 5));
-    while (DateTime.now().isBefore(deadline)) {
-      Map<String, dynamic> page;
-      try {
-        page = await _getJson(
-          '/sessions/$sessionId/events',
-          query: {'since': '$cursor', 'wait': '20000'},
-          timeout: const Duration(seconds: 40),
-        );
-      } on PiBridgeException {
-        rethrow;
-      } catch (e) {
-        throw PiBridgeException('event stream lost', _msg(e));
-      }
-
-      final events = (page['events'] as List?) ?? const [];
-      cursor = (page['cursor'] as num?)?.toInt() ?? cursor;
-      for (final e in events.whereType<Map>()) {
-        yield PiEvent.fromJson(Map<String, dynamic>.from(e));
-      }
-      if (page['settled'] == true && events.isEmpty) return;
-      if (page['alive'] == false) return;
-    }
-  }
-
-  /// Abort the in-flight run, keeping the session usable.
-  Future<void> abort(String sessionId) async {
-    try {
-      await _postJson('/sessions/$sessionId/abort', const {},
-          timeout: const Duration(seconds: 20));
-    } catch (_) {
-      // Aborting an idle session is not an error worth surfacing.
-    }
-  }
-
-  /// Alias used by the connector.
-  Future<PiVersionInfo> checkVersion() => version();
-
-  /// Push keys into pi's auth.json and report the resulting provider list.
-  Future<Map<String, dynamic>> pushKeys(Map<String, String> byProvider) async {
-    try {
-      final providers = await syncAuth(byProvider);
-      return {'ok': true, 'providers': providers};
-    } catch (e) {
-      return {'ok': false, 'error': PiBridgeException.hint(e)};
-    }
-  }
-
-  /// Register a compatible endpoint and report the outcome.
-  Future<Map<String, dynamic>> registerEndpoint({
-    required String provider,
-    required String baseUrl,
-    required String model,
-    String? apiKey,
-    String name = '',
-  }) async {
-    try {
-      await registerProvider(
-        provider: provider,
-        baseUrl: baseUrl,
-        model: model,
-        apiKey: apiKey,
-        name: name.isEmpty ? provider : name,
-      );
-      return {'ok': true, 'provider': provider};
-    } catch (e) {
-      return {'ok': false, 'error': PiBridgeException.hint(e)};
-    }
-  }
-
-  /// Start a prompt without consuming its stream, returning the replay cursor.
-  ///
-  /// Pair with [poll] when the caller wants to drive its own loop instead of
-  /// awaiting [prompt]'s stream.
+  /// Read it back with [poll] so the caller controls pacing and can interleave
+  /// its own state updates with each batch.
   Future<int> startPrompt(String sessionId, String message) async {
-    final accepted = await _postJson(
-      '/sessions/$sessionId/prompt',
-      {'message': message},
-      timeout: const Duration(seconds: 90),
-    );
+    final accepted = await _postJson('/sessions/$sessionId/prompt', {
+      'message': message,
+    }, timeout: const Duration(seconds: 90));
     if (accepted['ok'] == false) {
       throw PiBridgeException(
         (accepted['error'] ?? 'prompt rejected').toString(),
@@ -591,30 +607,59 @@ class PiBridgeClient {
     return (accepted['cursor'] as num?)?.toInt() ?? 0;
   }
 
-  /// Read one page of buffered events from [since].
-  Future<PiEventPage> poll(
+  /// Long-poll the replay buffer from [since].
+  ///
+  /// Long-polling (not EventSource) because `EventSource` cannot POST — pi
+  /// requires a POST to start a prompt — and it does not exist on Android.
+  Future<PiPollBatch> poll(
     String sessionId,
     int since, {
     Duration wait = const Duration(seconds: 20),
   }) async {
-    final j = await _getJson(
+    final page = await _getJson(
       '/sessions/$sessionId/events',
       query: {'since': '$since', 'wait': '${wait.inMilliseconds}'},
-      timeout: wait + const Duration(seconds: 20),
+      timeout: wait + const Duration(seconds: 25),
     );
-    return PiEventPage(
-      events: ((j['events'] as List?) ?? const [])
-          .whereType<Map>()
-          .map((e) => PiEvent.fromJson(Map<String, dynamic>.from(e)))
-          .toList(),
-      cursor: (j['cursor'] as num?)?.toInt() ?? since,
-      settled: j['settled'] == true,
-      alive: j['alive'] != false,
+    final events = ((page['events'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => PiEvent.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+    return PiPollBatch(
+      cursor: (page['cursor'] as num?)?.toInt() ?? since,
+      settled: page['settled'] == true,
+      alive: page['alive'] != false,
+      events: events,
     );
   }
 
-  /// Abort whatever session is streaming (connector-facing alias).
-  Future<void> cancel(String sessionId) => abort(sessionId);
+  /// Submit a prompt and stream every event until the run settles.
+  Stream<PiEvent> prompt(String sessionId, String message) async* {
+    var at = await startPrompt(sessionId, message);
+    final deadline = DateTime.now().add(const Duration(minutes: 6));
+    while (DateTime.now().isBefore(deadline)) {
+      final batch = await poll(sessionId, at);
+      at = batch.cursor;
+      for (final e in batch.events) {
+        yield e;
+      }
+      if (!batch.alive) return;
+      if (batch.settled && batch.events.isEmpty) return;
+    }
+  }
+
+  /// Abort the in-flight run, keeping the session usable.
+  Future<void> abort(String sessionId) async {
+    try {
+      await _postJson(
+        '/sessions/$sessionId/abort',
+        const {},
+        timeout: const Duration(seconds: 20),
+      );
+    } catch (_) {
+      // Aborting an idle session is not an error worth surfacing.
+    }
+  }
 
   Future<void> closeSession(String sessionId) async {
     try {
@@ -626,14 +671,14 @@ class PiBridgeClient {
     }
   }
 
+  // ── update ─────────────────────────────────────────────────────────────
+
   /// Run `pi update`, `pi update --all` or `pi update --models`.
   Future<PiUpdateResult> update(String target) async {
     try {
-      final j = await _postJson(
-        '/update',
-        {'target': target},
-        timeout: const Duration(minutes: 6),
-      );
+      final j = await _postJson('/update', {
+        'target': target,
+      }, timeout: const Duration(minutes: 6));
       return PiUpdateResult(
         ok: j['ok'] == true,
         target: target,
@@ -650,8 +695,9 @@ class PiBridgeClient {
     }
   }
 
-  static String _msg(Object e) =>
-      e is PiBridgeException ? '${e.message}${e.detail.isEmpty ? '' : ' — ${e.detail}'}' : e.toString();
+  static String _msg(Object e) => e is PiBridgeException
+      ? '${e.message}${e.detail.isEmpty ? '' : ' — ${e.detail}'}'
+      : e.toString();
 }
 
 @immutable
@@ -705,4 +751,28 @@ class PiEventPage {
   final int cursor;
   final bool settled;
   final bool alive;
+}
+
+/// One page of pi events read back from the replay buffer.
+@immutable
+class PiPollBatch {
+  const PiPollBatch({
+    required this.cursor,
+    required this.settled,
+    required this.alive,
+    this.events = const [],
+  });
+
+  /// Pass this back as `since` on the next poll.
+  final int cursor;
+
+  /// Pi has no further automatic work for the run.
+  final bool settled;
+
+  /// The underlying `pi` child process is still running.
+  final bool alive;
+
+  final List<PiEvent> events;
+
+  bool get isEmpty => events.isEmpty;
 }

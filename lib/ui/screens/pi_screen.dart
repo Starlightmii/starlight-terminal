@@ -4,7 +4,6 @@ import 'package:provider/provider.dart' hide Provider;
 import '../../core/agent_runtime.dart';
 import '../../core/palette.dart';
 import '../../core/pi_bridge.dart';
-import '../../core/providers.dart';
 import '../../state/studio_controller.dart';
 import '../../state/terminal_controller.dart';
 import '../widgets/chrome.dart';
@@ -153,7 +152,7 @@ class _PiScreenState extends State<PiScreen> {
   Widget _updatePanel(Palette palette, StudioController studio) {
     final pi = studio.pi;
     final up = pi.update;
-    final pending = up?.updateAvailable == true;
+    final pending = up != null && up.updateAvailable;
 
     return TermPanel(
       palette: palette,
@@ -178,6 +177,14 @@ class _PiScreenState extends State<PiScreen> {
             ),
           if (pi.lastUpdateRun != null)
             _row(palette, 'last update', _ago(pi.lastUpdateRun!)),
+          _row(
+            palette,
+            'auto check',
+            pi.autoUpdate
+                ? 'every ${pi.autoUpdateInterval.inHours}h'
+                : 'off',
+            valueColor: pi.autoUpdate ? palette.ok : palette.dim,
+          ),
           const SizedBox(height: 6),
           Wrap(
             spacing: 5,
@@ -208,13 +215,23 @@ class _PiScreenState extends State<PiScreen> {
                 },
                 active: pending || up?.latest != null,
               ),
+              _btn(
+                palette,
+                pi.autoUpdate ? 'AUTO: ON' : 'AUTO: OFF',
+                () {
+                  studio.pi.setAutoUpdate(!pi.autoUpdate);
+                  setState(() {});
+                },
+                active: pi.autoUpdate,
+              ),
             ],
           ),
           const SizedBox(height: 5),
           _note(
             palette,
-            'auto-update checks every 6h and refreshes the catalog; installing '
-            'a new binary is always a manual action.',
+            'auto-update checks every ${pi.autoUpdateInterval.inHours}h and '
+            'refreshes the catalog; installing a new binary is always a '
+            'manual action.',
             palette.dim,
           ),
         ],
@@ -457,7 +474,12 @@ class _PiScreenState extends State<PiScreen> {
             )
           else
             for (final m in shown.take(limit)) ...[
-              _modelRow(palette, m),
+              // A model is usable only when pi has a credential for its provider.
+              _modelRow(
+                palette,
+                m,
+                hasKey: studio.pi.hasCredential(m.provider),
+              ),
               const SizedBox(height: 3),
             ],
           if (shown.length > limit) ...[
@@ -480,8 +502,7 @@ class _PiScreenState extends State<PiScreen> {
     );
   }
 
-  Widget _modelRow(Palette palette, PiModel m) {
-    final hasKey = false; // credential state is per-provider, shown above
+  Widget _modelRow(Palette palette, PiModel m, {bool hasKey = false}) {
     return Row(
       children: [
         Text(
@@ -535,7 +556,8 @@ class _PiScreenState extends State<PiScreen> {
 
   // ── small widgets ──────────────────────────────────────────────────────
 
-  Widget _row(Palette palette, String k, String v) => Padding(
+  Widget _row(Palette palette, String k, String v, {Color? valueColor}) =>
+      Padding(
         padding: const EdgeInsets.only(bottom: 3),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -558,7 +580,7 @@ class _PiScreenState extends State<PiScreen> {
                 style: TextStyle(
                   fontFamily: 'Mono',
                   fontSize: 9,
-                  color: palette.bright,
+                  color: valueColor ?? palette.bright,
                 ),
               ),
             ),

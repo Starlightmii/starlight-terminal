@@ -139,6 +139,16 @@ class PiConnector extends ChangeNotifier {
 
   // ── auto-update ────────────────────────────────────────────────────────
 
+  /// Arm or disarm the periodic background check. Enabling it while connected
+  /// takes effect immediately; disabling cancels the pending timer.
+  void setAutoUpdate(bool on) {
+    if (autoUpdate == on) return;
+    autoUpdate = on;
+    _restartAutoTimer();
+    if (on && connected) unawaited(_autoUpdatePass());
+    notifyListeners();
+  }
+
   void _restartAutoTimer() {
     _autoTimer?.cancel();
     if (!autoUpdate || !connected) return;
@@ -185,14 +195,19 @@ class PiConnector extends ChangeNotifier {
     _activity = 'running pi update --$target';
     _setBusy(true);
     try {
-      final r = await _client.update(target: target);
+      final r = await _client.update(target);
       lastUpdateRun = DateTime.now();
       // A fresh binary means the old catalog and session are stale.
       _sessionOpen = false;
       await _client.status().then((s) => _status = s);
       await refreshModels(force: true);
       _update = await _client.checkVersion();
-      return r;
+      return {
+        'ok': r.ok,
+        'target': r.target,
+        'installed': r.installed,
+        'output': r.output,
+      };
     } catch (e) {
       _lastError = _short(e);
       return {'ok': false, 'error': _short(e)};
@@ -339,15 +354,15 @@ class PiConnector extends ChangeNotifier {
       case 'thinking_delta':
         onEvent(agent, AgentEvent(
           kind: AgentEventKind.thinking,
-          text: _clip(e.text, 200),
+          text: _clip(e.text ?? '', 200),
         ));
       case 'text_delta':
         onEvent(agent, AgentEvent(
           kind: AgentEventKind.message,
-          text: _clip(e.text, 200),
+          text: _clip(e.text ?? '', 200),
         ));
       case 'message':
-        final text = e.text.trim();
+        final text = (e.text ?? '').trim();
         if (text.isEmpty) return;
         agent.addMessage(AgentMessage(
           role: e.isError ? AgentRole.system : AgentRole.assistant,
@@ -372,7 +387,7 @@ class PiConnector extends ChangeNotifier {
           text: '${e.toolName} ${e.toolArgs ?? ''}'.trim(),
         ));
       case 'tool_end':
-        final text = e.text.trim();
+        final text = (e.text ?? '').trim();
         if (text.isNotEmpty) {
           agent.addMessage(AgentMessage(
             role: AgentRole.tool,
@@ -389,12 +404,12 @@ class PiConnector extends ChangeNotifier {
         agent.setState(AgentRunState.error, 'pi: error');
         agent.addMessage(AgentMessage(
           role: AgentRole.system,
-          text: e.text,
+          text: e.text ?? '',
           createdAt: DateTime.now(),
         ));
         onEvent(agent, AgentEvent(
           kind: AgentEventKind.warn,
-          text: _clip(e.text, 300),
+          text: _clip(e.text ?? '', 300),
         ));
     }
   }
