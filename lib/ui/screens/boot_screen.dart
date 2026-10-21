@@ -482,15 +482,15 @@ class SystemScreen extends StatelessWidget {
         _section(palette, 'RUNTIME', [
           _row(
             palette,
-            'pi bridge',
+            'pi agent',
             Text(
-              studio.pi.connected
-                  ? 'online · ${studio.pi.status.versionLabel}'
-                  : 'offline · ${studio.pi.baseUrl}',
+              studio.piOnline
+                  ? '${studio.pi.statusLabel} · ${studio.pi.models.length} models'
+                  : studio.pi.statusLabel,
               style: TextStyle(
                 fontFamily: 'Mono',
                 fontSize: 11,
-                color: studio.pi.connected ? palette.ok : palette.err,
+                color: studio.piOnline ? palette.ok : palette.warn,
               ),
             ),
           ),
@@ -520,13 +520,23 @@ class SystemScreen extends StatelessWidget {
           ),
           _row(
             palette,
-            'auto-update',
-            _switch(
-              palette,
-              studio.pi.autoUpdate,
-              () => studio.pi.setAutoUpdate(!studio.pi.autoUpdate),
-              onLabel: '6H',
-              offLabel: 'OFF',
+            'pi update',
+            InkWell(
+              onTap: () async {
+                final m = await studio.pi.update();
+                studio.appLog.info(m, scope: 'pi');
+              },
+              child: Text(
+                studio.pi.updateAvailable
+                    ? '↑ ${studio.pi.latestVersion}'
+                    : 'check',
+                style: TextStyle(
+                  fontFamily: 'Mono',
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: studio.pi.updateAvailable ? palette.warn : palette.mid,
+                ),
+              ),
             ),
           ),
         ]),

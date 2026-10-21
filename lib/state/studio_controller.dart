@@ -11,8 +11,9 @@ import '../core/app_log.dart';
 import '../core/effects.dart';
 import '../core/memory.dart';
 import '../core/palette.dart';
-import '../core/pi_bridge.dart';
-import '../core/pi_connector.dart';
+import '../core/model_client.dart';
+import '../core/pi_core.dart';
+import '../core/vfs.dart';
 import '../core/providers.dart';
 import '../core/session_store.dart';
 import 'terminal_controller.dart';
@@ -85,25 +86,109 @@ class StudioController extends ChangeNotifier implements CommandBridge {
   EffectParams _effects = const EffectParams();
   EffectParams get effects => _effects;
 
-  // ── Pi (real earendil-works/pi CLI via the bridge) ─────────────────────
-  final PiConnector pi = PiConnector();
+  // ── Pi agent core (native; no HTTP broker) ─────────────────────────────
+  //
+  // Earlier builds drove a `pi` CLI over a loopback HTTP bridge. That cannot
+  // work on a phone — 127.0.0.1 on the device is the device, and pi needs
+  // Node 22.19+ which Android cannot host. pi is now a managed component
+  // (version, manifest, real npm update checks) whose work is executed by the
+  // app itself against the operator's keys.
+  final PiCore pi = PiCore();
+  final ModelClient models = ModelClient();
+  final Vfs fs = Vfs();
 
-  /// True when the bridge answered and a `pi` binary was found.
-  bool get piOnline => pi.connected;
+  /// Ready LLM providers, best first — what the agent actually runs on.
+  List<Provider> get agentProviders =>
+      readyProviders.where((p) => p.kind == ProviderKind.llm).toList();
 
-  /// Models Pi reports, filtered by a query over id/provider/name.
-  List<PiModel> piModels([String query = '']) {
-    final q = query.trim().toLowerCase();
-    if (q.isEmpty) return pi.models;
-    return pi.models
-        .where((m) =>
-            m.id.toLowerCase().contains(q) ||
-            m.provider.toLowerCase().contains(q) ||
-            m.name.toLowerCase().contains(q))
-        .toList();
+  Provider? get agentProvider =>
+      agentProviders.isEmpty ? null : agentProviders.first;
+
+  bool get piOnline => pi.state == PiInstallState.installed;
+
+  /// The pi-backed turn used by [AgentLoop].
+  ///
+  /// This is the whole point of the rewrite: an agent step is a direct model
+  /// call with the operator's key, streamed into the transcript and the log.
+  /// No bridge, no loopback port, nothing that only exists on a desktop.
+  Future<void> _runPiTurn(
+    AgentRuntime agent,
+    String task,
+    void Function(AgentRuntime agent, AgentEvent event) onEvent,
+  ) async {
+    final provider = agentProvider;
+    if (provider == null) {
+      onEvent(agent, AgentEvent(
+        kind: AgentEventKind.warn,
+        text: 'no usable LLM key — add one in KEYS to run agents',
+      ));
+      agent.setState(AgentRunState.error, 'unconfigured');
+      return;
+    }
+
+    agent.setState(AgentRunState.thinking, 'pi · ${agent.name.toLowerCase()}');
+    onEvent(agent, AgentEvent(
+      kind: AgentEventKind.info,
+      text: 'pi ${pi.installedVersion} → ${provider.id} · ${agent.piModel.isEmpty ? 'default model' : agent.piModel}',
+    ));
+
+    final system = StringBuffer(
+      'You are ${agent.name}, ${agent.persona}. '
+      'Be concise and concrete. Prefer short paragraphs and plain text.',
+    );
+    if (agent.persona.trim().isNotEmpty) {
+      system.write('\n\n${agent.persona.trim()}');
+    }
+
+    final history = <Map<String, String>>[];
+    for (final line in agent.transcript.length > 12
+        ? agent.transcript.sublist(agent.transcript.length - 12)
+        : agent.transcript) {
+      if (line.role == AgentRole.assistant) {
+        history.add({'role': 'assistant', 'content': line.text});
+      }
+    }
+    history.add({'role': 'user', 'content': task});
+
+    final buf = StringBuffer();
+    try {
+      await for (final c in models.stream(
+        provider: provider,
+        messages: history,
+        model: agent.piModel.isEmpty ? null : agent.piModel,
+        system: system.toString(),
+      )) {
+        switch (c.kind) {
+          case ChunkKind.text:
+            buf.write(c.text);
+          case ChunkKind.thinking:
+            onEvent(agent, AgentEvent(kind: AgentEventKind.thinking, text: c.text));
+          case ChunkKind.error:
+            onEvent(agent, AgentEvent(kind: AgentEventKind.warn, text: c.text));
+            appLog.error(c.text, scope: agent.name.toLowerCase());
+            agent.setState(AgentRunState.error, 'pi error');
+            return;
+          case ChunkKind.tool:
+          case ChunkKind.done:
+            break;
+        }
+      }
+    } catch (e) {
+      onEvent(agent, AgentEvent(kind: AgentEventKind.warn, text: '$e'));
+      agent.setState(AgentRunState.error, 'pi error');
+      return;
+    }
+
+    final reply = buf.toString().trim();
+    if (reply.isEmpty) {
+      agent.setState(AgentRunState.error, 'empty reply');
+      return;
+    }
+    onEvent(agent, AgentEvent(kind: AgentEventKind.message, text: reply));
+    agent.setState(AgentRunState.idle, 'done');
   }
 
-  /// Bind an agent to Pi (or back to the local loop) and optionally pin a model.
+  /// Bind an agent to the pi backend (or back to the offline planner).
   void bindAgentToPi(String agentId, {bool enabled = true, String? model}) {
     final a = agentById(agentId);
     if (a == null) return;
@@ -111,24 +196,6 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     if (model != null) a.piModel = model;
     _persistAgents();
     _notify();
-  }
-
-  /// Push every configured key into Pi's own auth.json so Pi can use them.
-  Future<Map<String, dynamic>> syncKeysToPi() async {
-    final entries = <String, String>{};
-    for (final p in _providers) {
-      if (p.kind == ProviderKind.llm &&
-          p.ready &&
-          p.looksPlausible) {
-        entries[piProviderId(p)] = p.apiKey.trim();
-      }
-    }
-    if (entries.isEmpty) {
-      return {'ok': false, 'error': 'no llm keys configured'};
-    }
-    final r = await pi.pushKeys(entries);
-    _notify();
-    return r;
   }
 
   /// Maps a vault provider to the provider id Pi uses internally.
@@ -266,13 +333,15 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     // Attach the real Pi runtime. Failure only disables Pi-backed agents; the
     // local loop and the whole TUI keep working.
     pi.addListener(_notify);
-    _loop!.piRunner = pi.runAgentTurn;
+
+    _loop!.piRunner = _runPiTurn;
     memory.addListener(_notify);
     sessions.addListener(_notify);
     appLog.info('studio online · ${_agents.length} agents', scope: 'system');
     // Autonomous runs: one heartbeat for the fleet.
     scheduler.start();
-    unawaited(pi.connect());
+    // Provision the agent core on first boot so the terminal has a `pi` to run.
+    if (pi.state != PiInstallState.installed) unawaited(pi.install());
     _notify();
   }
 
@@ -331,6 +400,8 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     scheduler.dispose();
     pi.removeListener(_notify);
     pi.dispose();
+    models.dispose();
+    fs.dispose();
     super.dispose();
   }
 

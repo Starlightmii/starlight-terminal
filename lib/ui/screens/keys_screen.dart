@@ -100,16 +100,18 @@ class _KeysScreenState extends State<KeysScreen> {
                 ),
                 const SizedBox(height: 6),
                 InkWell(
-                  onTap: () async {
-                    final r = await studio.syncKeysToPi();
-                    if (!mounted) return;
-                    final ok = r['ok'] == true;
+                  onTap: () {
+                    // No broker any more: the app calls providers directly, so
+                    // "sync" is only a validation pass over the vault.
+                    final ready = studio.agentProviders;
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
-                          ok
-                              ? 'pushed ${r['pushed'] ?? 0} keys to pi'
-                              : 'pi sync failed: ${r['error'] ?? 'unreachable'}',
+                          ready.isEmpty
+                              ? 'no usable LLM key yet — add one below'
+                              : '${ready.length} provider'
+                                  '${ready.length == 1 ? '' : 's'} ready · '
+                                  'agents will use ${ready.first.id}',
                         ),
                         duration: const Duration(seconds: 3),
                       ),
@@ -126,7 +128,7 @@ class _KeysScreenState extends State<KeysScreen> {
                       ),
                     ),
                     child: Text(
-                      '⇪ SYNC TO PI',
+                      '✓ VALIDATE',
                       style: TextStyle(
                         fontFamily: 'Mono',
                         fontSize: 8,

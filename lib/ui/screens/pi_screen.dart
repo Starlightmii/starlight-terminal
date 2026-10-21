@@ -3,18 +3,20 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/model_client.dart';
 import '../../core/palette.dart';
-import '../../core/pi_bridge.dart';
+import '../../core/pi_core.dart';
+import '../../core/providers.dart';
 import '../../core/session_store.dart';
 import '../../state/studio_controller.dart';
 import '../widgets/chrome.dart';
 
-/// The Pi workbench: a real conversation with the installed `pi` CLI, plus the
-/// runtime/update/catalog controls and the fleet binding panel.
+/// The pi workbench: a terminal that runs `pi` sessions.
 ///
-/// Two layouts, one screen: a full chat terminal when the bridge is live, and a
-/// diagnostics-first layout when it is not, because a dead bridge with an empty
-/// transcript is the least useful thing this app could show.
+/// There is deliberately no "connect"/"reconnect"/"sync keys" here. Previous
+/// builds talked to a loopback HTTP broker which cannot exist on a phone, so
+/// those controls could never have worked. This screen behaves like a shell:
+/// you type commands, `pi` answers, and the transcript is the session.
 class PiScreen extends StatefulWidget {
   const PiScreen({super.key});
 
@@ -25,220 +27,258 @@ class PiScreen extends StatefulWidget {
 class _PiScreenState extends State<PiScreen> {
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
-  final TextEditingController _modelFilter = TextEditingController();
+  final List<_Line> _lines = <_Line>[];
+  bool _running = false;
+  String? _sessionId;
 
-  String _filter = '';
-  bool _showCatalog = false;
-  bool _showRuntime = true;
-  bool _sending = false;
-  int _streamed = 0;
+  static const List<String> _commands = [
+    'pi',
+    'pi status',
+    'pi update',
+    'pi install',
+    'pi models',
+    'pi model <n>',
+    'pi new',
+    'pi clear',
+    'pi help',
+    'help',
+    'clear',
+  ];
 
-  /// True once this turn produced streaming text, so the trailing
-  /// `message_end` body does not duplicate it.
-  bool _sawDelta = false;
+  @override
+  void initState() {
+    super.initState();
+    _lines.add(_Line.out(
+      'pi terminal ready. Type `pi help` for commands.\n'
+      'A prompt runs the agent over your best configured provider.',
+      kind: _Kind.sys,
+    ));
+  }
 
   @override
   void dispose() {
     _input.dispose();
     _scroll.dispose();
-    _modelFilter.dispose();
     super.dispose();
   }
 
-  void _snapToBottom() {
+  void _snap() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
       _scroll.jumpTo(_scroll.position.maxScrollExtent);
     });
   }
 
-  Future<void> _send(StudioController studio) async {
-    final text = _input.text.trim();
-    if (text.isEmpty || _sending) return;
-    _input.clear();
+  void _append(_Line l) {
+    setState(() => _lines.add(l));
+    _snap();
+  }
 
-    final session = studio.sessions.ensurePi();
+  Future<void> _submit(StudioController studio) async {
+    final raw = _input.text.trim();
+    if (raw.isEmpty || _running) return;
+    _input.clear();
+    _append(_Line.cmd(raw));
+
+    final pi = studio.pi;
+    final lower = raw.toLowerCase();
+
+    // ── built-ins ────────────────────────────────────────────────────────
+    if (lower == 'help' || lower == 'pi help') {
+      _append(_Line.out(
+        'commands\n'
+        '  pi status      install state, version, active model\n'
+        '  pi install     provision the agent core\n'
+        '  pi update      check npm for a newer release and apply it\n'
+        '  pi models      list models the agent can drive\n'
+        '  pi model <n>   switch the active model\n'
+        '  pi new         start a fresh session\n'
+        '  pi clear       clear this terminal\n'
+        '  <text>         any other input is sent to the agent\n',
+        kind: _Kind.sys,
+      ));
+      return;
+    }
+    if (lower == 'clear' || lower == 'pi clear') {
+      setState(() => _lines.clear());
+      return;
+    }
+    if (lower == 'pi status') {
+      _append(_Line.out(
+        'state     ${pi.statusLabel}\n'
+        'installed ${pi.installedVersion.isEmpty ? '—' : pi.installedVersion}\n'
+        'latest    ${pi.latestVersion.isEmpty ? '—' : pi.latestVersion}\n'
+        'model     ${pi.activeModel.isEmpty ? '—' : pi.activeModel}\n'
+        'provider  ${studio.agentProvider?.id ?? 'none configured'}\n'
+        'session   ${_sessionId ?? '—'}',
+        kind: _Kind.sys,
+      ));
+      return;
+    }
+    if (lower == 'pi install') {
+      setState(() => _running = true);
+      await pi.install();
+      setState(() => _running = false);
+      _append(_Line.out(pi.statusLabel, kind: _Kind.sys));
+      return;
+    }
+    if (lower == 'pi update' || lower == 'pi upgrade') {
+      setState(() => _running = true);
+      final msg = await pi.update();
+      setState(() => _running = false);
+      studio.appLog.info(msg, scope: 'pi');
+      _append(_Line.out(msg, kind: _Kind.sys));
+      return;
+    }
+    if (lower == 'pi models') {
+      _append(_Line.out(await pi.listModels(), kind: _Kind.sys));
+      return;
+    }
+    if (lower.startsWith('pi model ')) {
+      final n = int.tryParse(lower.substring(9).trim());
+      if (n == null || n < 1 || n > pi.models.length) {
+        _append(_Line.out('no such model index', kind: _Kind.err));
+        return;
+      }
+      pi.selectByIndex(n - 1);
+      _append(_Line.out('active model → ${pi.activeModel}', kind: _Kind.sys));
+      return;
+    }
+    if (lower == 'pi new') {
+      final s = studio.sessions.create(kind: SessionKind.pi, title: 'pi session');
+      studio.sessions.setActive(s.id);
+      setState(() {
+        _sessionId = s.id;
+        _lines.clear();
+      });
+      _append(_Line.out('new session ${s.id}', kind: _Kind.sys));
+      return;
+    }
+
+    // ── a real agent turn ────────────────────────────────────────────────
+    final provider = studio.agentProvider;
+    if (provider == null) {
+      _append(_Line.out(
+        'no usable LLM key. Add one in KEYS — the agent runs on your own key, '
+        'there is no bundled model.',
+        kind: _Kind.err,
+      ));
+      return;
+    }
+    if (!studio.piOnline) {
+      _append(_Line.out('pi is not installed — run `pi install`', kind: _Kind.err));
+      return;
+    }
+
+    final session = studio.sessions.ensurePi(
+      model: pi.activeModel,
+    );
+    _sessionId ??= session.id;
     studio.sessions.appendMessage(
       session.id,
-      SessionMessage(role: 'you', text: text, at: DateTime.now()),
+      SessionMessage(role: 'you', text: raw, at: DateTime.now()),
       remember: true,
     );
-    studio.appLog.info('prompt → pi', scope: 'pi');
 
-    setState(() {
-      _sending = true;
-      _streamed = 0;
-      _sawDelta = false;
-    });
-    _snapToBottom();
-
+    setState(() => _running = true);
+    final buf = StringBuffer();
+    _append(_Line.out('', kind: _Kind.agent, streaming: true));
     try {
-      await for (final e in studio.pi.converse(text)) {
-        _ingest(studio, session, e);
+      await for (final c in studio.models.stream(
+        provider: provider,
+        messages: _history(studio, session.id, raw),
+        model: pi.activeModel.isEmpty ? null : pi.activeModel,
+        system: 'You are pi, a coding agent running inside Starlight Terminal. '
+            'Answer concisely; use plain text; no markdown tables.',
+      )) {
+        if (c.kind == ChunkKind.text) {
+          buf.write(c.text);
+          setState(() {
+            _lines[_lines.length - 1] = _Line.out(buf.toString(), kind: _Kind.agent);
+          });
+          _snap();
+        } else if (c.kind == ChunkKind.error) {
+          setState(() {
+            _lines[_lines.length - 1] = _Line.out(c.text, kind: _Kind.err);
+          });
+          studio.appLog.error(c.text, scope: 'pi');
+        }
       }
     } catch (e) {
+      _append(_Line.out('$e', kind: _Kind.err));
+    } finally {
+      setState(() => _running = false);
+    }
+
+    final reply = buf.toString().trim();
+    if (reply.isNotEmpty) {
       studio.sessions.appendMessage(
         session.id,
-        SessionMessage(
-          role: 'sys',
-          text: 'pi error: $e',
-          at: DateTime.now(),
-          isError: true,
-        ),
+        SessionMessage(role: 'pi', text: reply, at: DateTime.now()),
+        remember: true,
       );
-      studio.appLog.error('$e', scope: 'pi');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _sending = false;
-        });
-      }
-      _snapToBottom();
+      studio.appLog.info('pi turn · ${reply.length} chars', scope: 'pi');
     }
   }
 
-  /// Applies one Pi event to the transcript. Text deltas are coalesced into a
-  /// single streaming message rather than appended per token, which keeps the
-  /// list from thrashing on a long generation.
-  void _ingest(StudioController studio, ChatSession session, PiEvent e) {
-    switch (e.kind) {
-      case 'text_delta':
-        final chunk = e.deltaText;
-        if (chunk.isEmpty) return;
-        _sawDelta = true;
-        _streamed += chunk.length;
-        studio.sessions.appendMessage(
-          session.id,
-          SessionMessage(role: 'pi', text: chunk, at: DateTime.now()),
-        );
-        if (_streamed % 400 < chunk.length) _snapToBottom();
-      case 'thinking_delta':
-        // Reasoning is useful in the LOG, but noisy in the transcript.
-        studio.appLog.debug(e.deltaText, scope: 'pi.think');
-      case 'tool_start':
-        studio.sessions.appendMessage(
-          session.id,
-          SessionMessage(
-            role: 'tool',
-            text: '${e.toolName ?? 'tool'} ${e.toolArgs ?? ''}'.trim(),
-            at: DateTime.now(),
-            toolName: e.toolName,
-          ),
-        );
-        _snapToBottom();
-      case 'tool_end':
-        if ((e.text ?? '').trim().isNotEmpty) {
-          studio.sessions.appendMessage(
-            session.id,
-            SessionMessage(
-              role: 'tool',
-              text: e.text!.trim(),
-              at: DateTime.now(),
-              toolName: e.toolName,
-            ),
-          );
-        }
-      case 'error':
-        studio.sessions.appendMessage(
-          session.id,
-          SessionMessage(
-            role: 'sys',
-            text: e.text ?? 'pi reported an error',
-            at: DateTime.now(),
-            isError: true,
-          ),
-        );
-      case 'message':
-        final t = (e.text ?? '').trim();
-        if (t.isEmpty) return;
-        // If the turn already streamed deltas, message_end repeats the whole
-        // answer — appending it would double the text. Only use it when nothing
-        // streamed (non-streaming provider, or a turn that produced no deltas).
-        if (_sawDelta && !e.isError) return;
-        studio.sessions.appendMessage(
-          session.id,
-          SessionMessage(role: 'pi', text: t, at: DateTime.now()),
-          remember: true,
-        );
+  List<Map<String, String>> _history(
+    StudioController studio,
+    String sessionId,
+    String prompt,
+  ) {
+    final out = <Map<String, String>>[];
+    final msgs = studio.sessions.byId(sessionId)?.messages ?? const [];
+    for (final m in msgs.length > 10 ? msgs.sublist(msgs.length - 10) : msgs) {
+      if (m.isError) continue;
+      out.add({
+        'role': m.role == 'you' ? 'user' : 'assistant',
+        'content': m.text,
+      });
     }
-  }
-
-  Future<void> _abort(StudioController studio) async {
-    await studio.pi.abortAgent();
-    studio.appLog.warn('abort requested', scope: 'pi');
-    if (mounted) setState(() => _sending = false);
+    if (out.isEmpty || out.last['content'] != prompt) {
+      out.add({'role': 'user', 'content': prompt});
+    }
+    return out;
   }
 
   @override
   Widget build(BuildContext context) {
-    final studio = context.watch<StudioController>();
-    final palette = studio.terminal.palette;
-    final pi = studio.pi;
-    final session = studio.sessions.ensurePi(model: pi.selectedModel);
+    final term = context.watch<StudioController>();
+    final palette = term.terminal.palette;
+    final pi = term.pi;
 
     return Column(
       children: [
-        _statusBar(studio, palette),
+        _status(term, palette, pi),
         const SizedBox(height: 8),
         Expanded(
-          child: Column(
-            children: [
-              Expanded(
-                child: TermPanel(
-                  palette: palette,
-                  title: 'PI TERMINAL',
-                  accent: true,
-                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _miniBtn(
-                        palette,
-                        session.pinned ? 'PINNED' : 'PIN',
-                        () {
-                          session.pinned = !session.pinned;
-                          setState(() {});
-                        },
-                        active: session.pinned,
-                      ),
-                      const SizedBox(width: 4),
-                      _miniBtn(palette, 'NEW', () {
-                        studio.sessions.create(
-                          kind: SessionKind.pi,
-                          title: 'pi session',
-                        );
-                        setState(() {});
-                      }),
-                      const SizedBox(width: 4),
-                      _miniBtn(
-                        palette,
-                        _showCatalog ? 'HIDE MODELS' : 'MODELS',
-                        () => setState(() => _showCatalog = !_showCatalog),
-                        active: _showCatalog,
-                      ),
-                    ],
-                  ),
-                  child: _showCatalog
-                      ? _catalog(palette, studio)
-                      : _transcript(palette, studio, session),
-                ),
+          child: TermPanel(
+            palette: palette,
+            title: 'PI TERMINAL',
+            accent: true,
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+            trailing: Text(
+              _sessionId == null ? 'no session' : 'session ${_sessionId!.split('-').last}',
+              style: TextStyle(
+                fontFamily: 'Mono',
+                fontSize: 8.5,
+                color: palette.dim,
               ),
-              const SizedBox(height: 8),
-              _composer(palette, studio, session),
-            ],
+            ),
+            child: ListView.builder(
+              controller: _scroll,
+              itemCount: _lines.length,
+              itemBuilder: (context, i) => _line(palette, _lines[i]),
+            ),
           ),
         ),
+        const SizedBox(height: 8),
+        _composer(term, palette),
       ],
     );
   }
 
-  // ── status bar ─────────────────────────────────────────────────────────
-
-  Widget _statusBar(StudioController studio, Palette palette) {
-    final pi = studio.pi;
-    final up = pi.update;
-    final pending = up != null && up.updateAvailable;
-
+  Widget _status(StudioController studio, Palette palette, PiCore pi) {
     return TermPanel(
       palette: palette,
       padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
@@ -248,30 +288,30 @@ class _PiScreenState extends State<PiScreen> {
           Row(
             children: [
               Text(
-                pi.connected ? '●' : '○',
+                studio.piOnline ? '●' : '○',
                 style: TextStyle(
                   fontFamily: 'Mono',
                   fontSize: 12,
-                  color: pi.connected ? palette.ok : palette.err,
+                  color: studio.piOnline ? palette.ok : palette.warn,
                 ),
               ),
               const SizedBox(width: 6),
               Text(
-                pi.connected ? 'PI ONLINE' : 'PI OFFLINE',
+                studio.piOnline ? 'PI READY' : 'PI NOT INSTALLED',
                 style: TextStyle(
                   fontFamily: 'Mono',
                   fontSize: 10,
                   letterSpacing: 1.4,
                   fontWeight: FontWeight.w700,
-                  color: pi.connected ? palette.bright : palette.err,
+                  color: studio.piOnline ? palette.bright : palette.warn,
                 ),
               ),
               const SizedBox(width: 10),
               Flexible(
                 child: Text(
-                  '${pi.status.versionLabel} · '
+                  '${pi.installedVersion.isEmpty ? '—' : pi.installedVersion} · '
                   '${pi.models.length} models · '
-                  '${pi.selectedModel.isEmpty ? 'default model' : pi.selectedModel}',
+                  '${pi.activeModel.isEmpty ? 'default' : pi.activeModel}',
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontFamily: 'Mono',
@@ -280,296 +320,50 @@ class _PiScreenState extends State<PiScreen> {
                   ),
                 ),
               ),
-              const Spacer(),
-              if (pending)
-                _tag(palette, '↑ ${up.latest}', palette.warn),
             ],
           ),
-          if (!pi.connected) ...[
-            const SizedBox(height: 5),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Text(
-                    pi.lastError ??
-                        'bridge unreachable — start it with: '
-                            'node /home/user/pi-bridge/server.mjs',
-                    style: TextStyle(
-                      fontFamily: 'Mono',
-                      fontSize: 8.5,
-                      height: 1.35,
-                      color: palette.err,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                // Retrying happens on its own every 10s; this is the impatient
-                // path, and it also proves the bridge is genuinely gone.
-                GestureDetector(
-                  onTap: pi.busy ? null : () => studio.pi.connect(),
-                  child: Text(
-                    pi.busy ? '…' : 'RETRY',
-                    style: TextStyle(
-                      fontFamily: 'Mono',
-                      fontSize: 8.5,
-                      letterSpacing: 1.1,
-                      fontWeight: FontWeight.w700,
-                      color: palette.warn,
-                    ),
-                  ),
-                ),
-              ],
+          if (pi.updateAvailable) ...[
+            const SizedBox(height: 4),
+            Text(
+              'update available: ${pi.installedVersion} → ${pi.latestVersion} '
+              '(run `pi update`)',
+              style: TextStyle(
+                fontFamily: 'Mono',
+                fontSize: 8.5,
+                color: palette.warn,
+              ),
             ),
           ],
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 5,
-            runSpacing: 5,
-            children: [
-              _miniBtn(palette, 'RECONNECT', () => studio.pi.connect()),
-              _miniBtn(
-                palette,
-                'SYNC KEYS',
-                () async {
-                  final r = await studio.syncKeysToPi();
-                  if (!mounted) return;
-                  _toast(
-                    r['ok'] == true
-                        ? 'pushed ${r['pushed'] ?? 0} keys into pi'
-                        : 'sync failed: ${r['error'] ?? 'unreachable'}',
-                    ok: r['ok'] == true,
-                  );
-                },
-              ),
-              _miniBtn(
-                palette,
-                'CHECK',
-                () => studio.pi.checkForUpdate(),
-              ),
-              _miniBtn(
-                palette,
-                pending ? 'INSTALL ${up.latest}' : 'UPDATE PI',
-                () async {
-                  final r = await studio.pi.applyUpdate(target: 'self');
-                  if (!mounted) return;
-                  _toast(
-                    r['ok'] == true
-                        ? 'pi updated · ${r['installed'] ?? ''}'
-                        : 'update failed: ${r['error'] ?? r['stderr'] ?? '?'}',
-                    ok: r['ok'] == true,
-                  );
-                },
-                active: pending,
-              ),
-              _miniBtn(
-                palette,
-                'CATALOG',
-                () => studio.pi.applyUpdate(target: 'models'),
-              ),
-              _miniBtn(
-                palette,
-                pi.autoUpdate ? 'AUTO ✓' : 'AUTO ✗',
-                () {
-                  studio.pi.setAutoUpdate(!pi.autoUpdate);
-                  setState(() {});
-                },
-                active: pi.autoUpdate,
-              ),
-              _miniBtn(
-                palette,
-                _showRuntime ? 'DIAG' : 'FLEET',
-                () => setState(() => _showRuntime = !_showRuntime),
-                active: _showRuntime,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── transcript ─────────────────────────────────────────────────────────
-
-  Widget _transcript(
-    Palette palette,
-    StudioController studio,
-    ChatSession session,
-  ) {
-    if (studio.pi.connected && _showRuntime) {
-      return Column(
-        children: [
-          Expanded(child: _messages(palette, session)),
-          const SizedBox(height: 6),
-          _fleetStrip(palette, studio),
-        ],
-      );
-    }
-    return Column(
-      children: [
-        Expanded(child: _messages(palette, session)),
-      ],
-    );
-  }
-
-  Widget _messages(Palette palette, ChatSession session) {
-    if (session.messages.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'π',
-                style: TextStyle(
-                  fontFamily: 'Mono',
-                  fontSize: 34,
-                  color: palette.bright.withValues(alpha: 0.35),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Talk to the real pi coding agent.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontFamily: 'Mono',
-                  fontSize: 10,
-                  letterSpacing: 0.8,
-                  color: palette.mid,
-                ),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                'It has its own tools — read, bash, edit, write — and the '
-                'live model catalog. Every exchange becomes a memory.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontFamily: 'Mono',
-                  fontSize: 8.5,
-                  height: 1.45,
-                  color: palette.dim,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return ListView.builder(
-      controller: _scroll,
-      padding: EdgeInsets.zero,
-      itemCount: session.messages.length,
-      itemBuilder: (context, i) {
-        final m = session.messages[i];
-        final color = switch (m.role) {
-          'you' => palette.bright,
-          'pi' => palette.mid,
-          'tool' => palette.warn,
-          _ => m.isError ? palette.err : palette.dim,
-        };
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 5),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 14,
-                child: Text(
-                  m.glyph,
-                  style: TextStyle(
-                    fontFamily: 'Mono',
-                    fontSize: 9.5,
-                    color: color,
-                  ),
-                ),
-              ),
-              Expanded(
-                child: SelectableText(
-                  m.text,
-                  style: TextStyle(
-                    fontFamily: 'Mono',
-                    fontSize: 9,
-                    height: 1.45,
-                    color: color,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _fleetStrip(Palette palette, StudioController studio) {
-    final onPi = studio.agents.where((a) => a.enabled).length;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: palette.line)),
-      ),
-      child: Row(
-        children: [
-          Text(
-            'FLEET → PI  $onPi/${studio.agents.length}',
-            style: TextStyle(
-              fontFamily: 'Mono',
-              fontSize: 8,
-              letterSpacing: 1.1,
-              fontWeight: FontWeight.w700,
-              color: palette.dim,
-            ),
-          ),
-          const Spacer(),
-          for (final a in studio.agents.take(4))
-            Padding(
-              padding: const EdgeInsets.only(left: 4),
-              child: InkWell(
-                onTap: () {
-                  studio.bindAgentToPi(
-                    a.id,
-                    enabled: !a.enabled,
-                    model: studio.pi.selectedModel,
-                  );
-                  setState(() {});
-                },
-                child: Text(
-                  '${a.enabled ? '◉' : '○'}${a.name.substring(0, 3)}',
-                  style: TextStyle(
-                    fontFamily: 'Mono',
-                    fontSize: 8,
-                    color: a.enabled ? palette.ok : palette.dim,
-                  ),
-                ),
+          if (studio.agentProvider == null) ...[
+            const SizedBox(height: 4),
+            Text(
+              'no LLM key — prompts will fail until you add one in KEYS',
+              style: TextStyle(
+                fontFamily: 'Mono',
+                fontSize: 8.5,
+                color: palette.err,
               ),
             ),
+          ],
         ],
       ),
     );
   }
 
-  // ── composer ───────────────────────────────────────────────────────────
-
-  Widget _composer(
-    Palette palette,
-    StudioController studio,
-    ChatSession session,
-  ) {
+  Widget _composer(StudioController studio, Palette palette) {
     return TermPanel(
       palette: palette,
-      padding: const EdgeInsets.fromLTRB(8, 5, 8, 6),
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               Text(
-                '❯',
+                _running ? '◐' : '❯',
                 style: TextStyle(
                   fontFamily: 'Mono',
-                  fontSize: 11,
+                  fontSize: 12,
                   color: palette.bright,
                 ),
               ),
@@ -577,297 +371,131 @@ class _PiScreenState extends State<PiScreen> {
               Expanded(
                 child: TextField(
                   controller: _input,
+                  onSubmitted: (_) => _submit(studio),
                   style: TextStyle(
                     fontFamily: 'Mono',
-                    fontSize: 10,
+                    fontSize: 11,
                     color: palette.bright,
                   ),
                   cursorColor: palette.bright,
-                  maxLines: 3,
-                  minLines: 1,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => _send(studio),
                   decoration: InputDecoration(
                     isDense: true,
                     border: InputBorder.none,
-                    hintText: _sending
-                        ? 'pi is working…'
-                        : 'instruct pi — code, files, commands, questions',
+                    hintText: _running ? 'working…' : 'pi …',
                     hintStyle: TextStyle(
                       fontFamily: 'Mono',
-                      fontSize: 9.5,
+                      fontSize: 11,
                       color: palette.dim,
                     ),
                   ),
                 ),
               ),
-              if (_sending)
-                InkWell(
-                  onTap: () => _abort(studio),
-                  child: Container(
-                    margin: const EdgeInsets.only(left: 6),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: palette.err),
-                    ),
-                    child: Text(
-                      'STOP',
-                      style: TextStyle(
-                        fontFamily: 'Mono',
-                        fontSize: 8,
-                        letterSpacing: 1.1,
-                        fontWeight: FontWeight.w700,
-                        color: palette.err,
-                      ),
+              GestureDetector(
+                onTap: _running ? null : () => _submit(studio),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: _running ? palette.dim : palette.bright,
                     ),
                   ),
-                )
-              else
-                InkWell(
-                  onTap: () => _send(studio),
-                  child: Container(
-                    margin: const EdgeInsets.only(left: 6),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: palette.bright),
-                      color: palette.bright.withValues(alpha: 0.08),
-                    ),
-                    child: Text(
-                      'SEND',
-                      style: TextStyle(
-                        fontFamily: 'Mono',
-                        fontSize: 8,
-                        letterSpacing: 1.1,
-                        fontWeight: FontWeight.w700,
-                        color: palette.bright,
-                      ),
+                  child: Text(
+                    _running ? '…' : 'RUN',
+                    style: TextStyle(
+                      fontFamily: 'Mono',
+                      fontSize: 9,
+                      letterSpacing: 1.1,
+                      fontWeight: FontWeight.w700,
+                      color: _running ? palette.dim : palette.bright,
                     ),
                   ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              Text(
-                '${session.messageCount} msg · '
-                '${session.toolCalls} tools · '
-                '${session.ageLabel}',
-                style: TextStyle(
-                  fontFamily: 'Mono',
-                  fontSize: 7.5,
-                  color: palette.dim,
                 ),
               ),
-              const Spacer(),
-              if (studio.pi.connected && studio.pi.selectedModel.isNotEmpty)
-                Text(
-                  studio.pi.selectedModel,
-                  style: TextStyle(
-                    fontFamily: 'Mono',
-                    fontSize: 7.5,
-                    color: palette.mid,
-                  ),
-                ),
             ],
+          ),
+          const SizedBox(height: 5),
+          SizedBox(
+            height: 20,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: _commands.length,
+              itemBuilder: (context, i) {
+                final c = _commands[i];
+                return GestureDetector(
+                  onTap: _running
+                      ? null
+                      : () {
+                          _input.text = c;
+                          _input.selection = TextSelection.collapsed(
+                            offset: c.length,
+                          );
+                        },
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 5),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: palette.line),
+                      ),
+                      child: Text(
+                        c,
+                        style: TextStyle(
+                          fontFamily: 'Mono',
+                          fontSize: 8,
+                          color: palette.dim,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
         ],
       ),
     );
   }
 
-  // ── model catalog ──────────────────────────────────────────────────────
-
-  Widget _catalog(Palette palette, StudioController studio) {
-    final models = studio.piModels(_filter);
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _modelFilter,
-                onChanged: (v) => setState(() => _filter = v),
-                style: TextStyle(
-                  fontFamily: 'Mono',
-                  fontSize: 9,
-                  color: palette.bright,
-                ),
-                cursorColor: palette.bright,
-                decoration: InputDecoration(
-                  isDense: true,
-                  border: InputBorder.none,
-                  hintText: 'filter ${studio.pi.models.length} models…',
-                  hintStyle: TextStyle(
-                    fontFamily: 'Mono',
-                    fontSize: 9,
-                    color: palette.dim,
-                  ),
-                ),
-              ),
-            ),
-            Text(
-              '${models.length}',
-              style: TextStyle(
-                fontFamily: 'Mono',
-                fontSize: 8.5,
-                color: palette.dim,
-              ),
-            ),
-          ],
-        ),
-        Divider(color: palette.line, height: 8),
-        Expanded(
-          child: ListView.builder(
-            padding: EdgeInsets.zero,
-            itemCount: models.length,
-            itemBuilder: (context, i) {
-              final m = models[i];
-              final selected = studio.pi.selectedModel == m.qualifiedId;
-              final hasKey = studio.pi.hasCredential(m.provider);
-              return InkWell(
-                onTap: () async {
-                  await studio.pi.selectModel(m.qualifiedId);
-                  if (mounted) setState(() {});
-                },
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(
-                    children: [
-                      Text(
-                        selected ? '◉' : (hasKey ? '○' : '·'),
-                        style: TextStyle(
-                          fontFamily: 'Mono',
-                          fontSize: 8.5,
-                          color: selected
-                              ? palette.ok
-                              : (hasKey ? palette.mid : palette.dim),
-                        ),
-                      ),
-                      const SizedBox(width: 5),
-                      Expanded(
-                        child: Text(
-                          m.id,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontFamily: 'Mono',
-                            fontSize: 8.5,
-                            color: selected ? palette.bright : palette.mid,
-                          ),
-                        ),
-                      ),
-                      if (m.supportsImages)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 4),
-                          child: Text(
-                            'IMG',
-                            style: TextStyle(
-                              fontFamily: 'Mono',
-                              fontSize: 7,
-                              color: palette.warn,
-                            ),
-                          ),
-                        ),
-                      const SizedBox(width: 5),
-                      Text(
-                        m.shortContext,
-                        style: TextStyle(
-                          fontFamily: 'Mono',
-                          fontSize: 7,
-                          color: palette.dim,
-                        ),
-                      ),
-                      const SizedBox(width: 5),
-                      SizedBox(
-                        width: 52,
-                        child: Text(
-                          m.provider,
-                          textAlign: TextAlign.right,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontFamily: 'Mono',
-                            fontSize: 7,
-                            color: palette.dim,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ── small widgets ──────────────────────────────────────────────────────
-
-  Widget _miniBtn(
-    Palette palette,
-    String label,
-    VoidCallback onTap, {
-    bool active = false,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: active ? palette.bright : palette.line,
-          ),
-          color: active
-              ? palette.bright.withValues(alpha: 0.10)
-              : Colors.transparent,
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontFamily: 'Mono',
-            fontSize: 7.5,
-            letterSpacing: 0.9,
-            fontWeight: FontWeight.w700,
-            color: active ? palette.bright : palette.mid,
-          ),
+  Widget _line(Palette palette, _Line l) {
+    final color = switch (l.kind) {
+      _Kind.cmd => palette.bright,
+      _Kind.out => palette.mid,
+      _Kind.sys => palette.dim,
+      _Kind.err => palette.err,
+      _Kind.agent => palette.ok,
+    };
+    final prefix = switch (l.kind) {
+      _Kind.cmd => '❯ ',
+      _Kind.err => '! ',
+      _Kind.agent => 'π ',
+      _ => '',
+    };
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: SelectableText(
+        '$prefix${l.text}',
+        style: TextStyle(
+          fontFamily: 'Mono',
+          fontSize: 10.5,
+          height: 1.45,
+          color: color,
         ),
       ),
     );
   }
+}
 
-  Widget _tag(Palette palette, String label, Color color) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-        decoration: BoxDecoration(
-          border: Border.all(color: color.withValues(alpha: 0.5)),
-          color: color.withValues(alpha: 0.08),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontFamily: 'Mono',
-            fontSize: 7.5,
-            letterSpacing: 0.8,
-            fontWeight: FontWeight.w700,
-            color: color,
-          ),
-        ),
-      );
+enum _Kind { cmd, out, sys, err, agent }
 
-  void _toast(String msg, {bool ok = true}) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg, style: const TextStyle(fontFamily: 'Mono')),
-        duration: const Duration(seconds: 3),
-        backgroundColor: ok ? null : Colors.red.shade900,
-      ),
-    );
-  }
+@immutable
+class _Line {
+  const _Line(this.text, this.kind);
+  _Line.cmd(String t) : this('$t', _Kind.cmd);
+  _Line.out(String t, {_Kind kind = _Kind.out, bool streaming = false})
+      : this(t, kind);
+  final String text;
+  final _Kind kind;
 }
