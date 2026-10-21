@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 
 import '../core/model_client.dart';
 import '../core/pi_commands.dart';
+import '../core/pi_core.dart';
+import '../core/providers.dart';
 import '../core/session_store.dart';
 import '../state/studio_controller.dart';
 
@@ -194,6 +196,34 @@ class PiSession extends ChangeNotifier {
     _history.add(input);
     _suggestions = const [];
 
+    // `pi /model`, `pi models`, `pi --help` and friends are shell lines, not
+    // prompts. Treating them as prose is why "pi /commands" looked broken: the
+    // text went to the model, which answered about pi instead of running it.
+    final lowered = input.toLowerCase();
+    if (lowered == 'pi' ||
+        lowered.startsWith('pi ') ||
+        lowered == 'commands' ||
+        lowered == '/commands') {
+      final rest = lowered == 'commands' || lowered == '/commands'
+          ? '/help'
+          : input.length > 3
+              ? input.substring(3).trim()
+              : '';
+      _append('❯ $input', PiLineKind.cmd);
+      if (rest.isEmpty) {
+        _append(_piShellSummary(), PiLineKind.sys);
+        return;
+      }
+      final normalised = rest.startsWith('/') ? rest : '/$rest';
+      // A `pi <sub>` that is not a pi slash command is a shell invocation.
+      if (_isPiCommand(normalised)) {
+        await _slash(normalised);
+      } else {
+        await _shell(rest);
+      }
+      return;
+    }
+
     if (input.startsWith('/') && !input.startsWith('/skill:')) {
       _append('❯ $input', PiLineKind.cmd);
       await _slash(input);
@@ -206,7 +236,7 @@ class PiSession extends ChangeNotifier {
     }
     if (input.startsWith('!')) {
       _append('❯ $input', PiLineKind.cmd);
-      _shell(input);
+      await _shell(input);
       return;
     }
 
@@ -214,22 +244,64 @@ class PiSession extends ChangeNotifier {
     await _agentTurn(input);
   }
 
+  /// Is this `/<name>` a pi command we actually implement?
+  bool _isPiCommand(String slash) {
+    final space = slash.indexOf(' ');
+    final name = (space < 0 ? slash : slash.substring(0, space)).toLowerCase();
+    return kPiCommands.any((c) => c.name == name) ||
+        name == '/models' ||
+        name == '/use' ||
+        name == '/keys' ||
+        name == '/commands' ||
+        name == '/install' ||
+        name == '/logout';
+  }
+
+  String _piShellSummary() {
+    return 'pi ${studio.pi.installedVersion.isEmpty ? '(not installed)' : studio.pi.installedVersion}'
+        '\n'
+        '  pi status | models [query] | models --refresh | model <n|id>\n'
+        '  pi install | update | version | --help\n'
+        'Inside this transcript you can also type the slash form directly:\n'
+        '  ${kPiCommands.map((c) => c.name).join('  ')}';
+  }
+
   // ══════════════════════════════════════════════════════════════════════
   // Shell passthrough (`!cmd` / `!!cmd`)
   // ══════════════════════════════════════════════════════════════════════
 
-  void _shell(String input) {
+  Future<void> _shell(String input) async {
     final silent = input.startsWith('!!');
     final cmd = silent ? input.substring(2).trim() : input.substring(1).trim();
     if (cmd.isEmpty) {
       _append('shell: nothing to run', PiLineKind.err);
       return;
     }
-    final out = studio.shellExec(cmd);
+
+    // `pi update` and `pi models --refresh` do real network work. They used to
+    // be fired with `unawaited()` so their result never reached the log — the
+    // command appeared to do nothing. Await them and stream a waiting line.
+    final slow = studio.isSlowShell(cmd);
+    if (slow) {
+      _running = true;
+      _append('… ${cmd.split(' ').join(' ')}', PiLineKind.sys);
+      notifyListeners();
+    }
+
+    String? out;
+    try {
+      out = await studio.shellExecAsync(cmd);
+    } finally {
+      if (slow) {
+        _running = false;
+        notifyListeners();
+      }
+    }
+
     if (out == null) {
       _append(
         'shell: `$cmd` is not a builtin. Try ls, cd, pwd, cat, echo, mkdir, '
-        'touch, rm, df, pi.',
+        'touch, rm, df, pi, or `man` for the full list.',
         PiLineKind.err,
       );
       return;
@@ -441,6 +513,18 @@ class PiSession extends ChangeNotifier {
       // ── models ─────────────────────────────────────────────────────────
       case '/model':
         await _modelCommand(arg);
+      case '/models':
+        await _modelsCommand(arg);
+      case '/use':
+        await _modelCommand(arg);
+      case '/keys':
+        _keysCommand(arg);
+      case '/commands':
+        _printHelp();
+      case '/install':
+        await _installCommand();
+      case '/net':
+        _netCheck();
       case '/thinking':
         if (arg.isEmpty) {
           _append(
@@ -468,13 +552,21 @@ class PiSession extends ChangeNotifier {
 
       // ── auth ───────────────────────────────────────────────────────────
       case '/login':
+        _keysCommand(arg);
       case '/logout':
+        final id = arg.trim();
+        if (id.isEmpty) {
+          _append(
+            'usage: /logout <provider>  (e.g. /logout openrouter)\n'
+            'Keys live in the vault; the KEYS tab removes them too.',
+            PiLineKind.sys,
+          );
+        } else {
+          studio.clearKey(id);
+          _append('cleared the key for $id', PiLineKind.info);
+        }
       case '/settings':
-        _append(
-          '$name is handled by the KEY VAULT, not the transcript. '
-          'Open the KEYS tab to add, replace or remove a provider key.',
-          PiLineKind.sys,
-        );
+        _keysCommand('');
 
       // ── sessions ───────────────────────────────────────────────────────
       case '/new':
@@ -582,45 +674,177 @@ class PiSession extends ChangeNotifier {
   Future<void> _modelCommand(String arg) async {
     final pi = studio.pi;
     if (pi.models.isEmpty) {
-      _append('no model catalog — run /update first', PiLineKind.err);
+      _append(
+        'no model catalog yet. Add a key in KEYS — every enabled LLM provider '
+        'contributes its models — then /models --refresh to confirm ids.',
+        PiLineKind.err,
+      );
       return;
     }
-    if (arg.isEmpty) {
-      final b = StringBuffer('models\n');
-      for (var i = 0; i < pi.models.length; i++) {
-        final m = pi.models[i];
-        final mark = m.id == pi.activeModel ? '*' : ' ';
-        b.writeln('$mark ${(i + 1).toString().padLeft(2)}. '
-            '${m.id.padRight(26)}${m.vendor} · ${m.context}k');
-      }
-      b.write('use /model <n> or /model <id>');
-      _append(b.toString(), PiLineKind.sys);
+    if (arg.isEmpty || arg == 'list') {
+      _append(await _catalogBody(''), PiLineKind.sys);
       return;
     }
-    final n = int.tryParse(arg);
-    if (n != null) {
-      if (n < 1 || n > pi.models.length) {
-        _append('no model at index $n', PiLineKind.err);
+    final hit = pi.resolve(arg);
+    if (hit == null) {
+      final loose = pi.search(arg);
+      _append(
+        'no model matching "$arg" among ${pi.models.length}'
+        '${loose.isEmpty ? '' : '\nclosest: ${loose.take(5).map((m) => m.id).join(', ')}'}',
+        PiLineKind.err,
+      );
+      return;
+    }
+    pi.setModel(hit.id);
+    final s = studio.sessions.ensurePi(model: pi.activeModel);
+    s.piModel = pi.activeModel;
+    studio.sessions.touch();
+    studio.appLog.info('pi model → ${hit.label}', scope: 'pi');
+    _append(
+      'model → ${hit.id}\n'
+      'provider ${hit.providerId.isEmpty ? (studio.agentProvider?.id ?? 'none') : hit.providerId}'
+      ' · ctx ${hit.contextLabel}'
+      '${hit.reasoning ? ' · reasoning' : ''}${hit.free ? ' · free' : ''}',
+      PiLineKind.info,
+    );
+  }
+
+  /// `/models [query]` — list or search; `--refresh` asks the providers.
+  Future<void> _modelsCommand(String arg) async {
+    final refresh = arg.contains('--refresh') || arg.contains('-r');
+    final query = arg
+        .split(RegExp(r'\s+'))
+        .where((a) => a.isNotEmpty && a != '--refresh' && a != '-r')
+        .join(' ');
+    if (refresh) {
+      if (studio.agentProviders.isEmpty) {
+        _append(
+          'nothing to refresh — no LLM key is configured. Add one in KEYS.',
+          PiLineKind.err,
+        );
         return;
       }
-      pi.selectByIndex(n - 1);
+      _running = true;
+      _append(
+        'asking ${studio.agentProviders.map((p) => p.id).join(', ')} for /models…',
+        PiLineKind.sys,
+      );
+      notifyListeners();
+      final report = await studio.pi.probeProviders(studio.providers);
+      _running = false;
+      notifyListeners();
+      studio.appLog.info('pi models refresh · ${report.summary()}', scope: 'pi');
+      _append(report.summary(), report.ok ? PiLineKind.info : PiLineKind.err);
+    }
+    _append(await _catalogBody(query), PiLineKind.sys);
+  }
+
+  Future<String> _catalogBody(String query) async {
+    final pi = studio.pi;
+    final hits = pi.search(query);
+    if (hits.isEmpty) {
+      return query.isEmpty
+          ? 'catalog is empty — add a key in KEYS'
+          : 'no model matching "$query" among ${pi.models.length}';
+    }
+    final b = StringBuffer();
+    if (query.isEmpty) {
+      final providers = pi.models.map((m) => m.providerId).toSet();
+      b.writeln('catalog · ${pi.models.length} models · '
+          '${providers.length} providers'
+          '${pi.probedProviders.isEmpty ? ' · ids unconfirmed (/models --refresh)' : ' · confirmed: ${pi.probedProviders.join(', ')}'}');
     } else {
-      final hit = pi.models.where((m) => m.id == arg).toList();
-      if (hit.isEmpty) {
-        final loose = pi.models
-            .where((m) => m.id.toLowerCase().contains(arg.toLowerCase()))
-            .toList();
-        if (loose.isEmpty) {
-          _append('no model matching "$arg"', PiLineKind.err);
-          return;
-        }
-        pi.setModel(loose.first.id);
-      } else {
-        pi.setModel(hit.first.id);
+      b.writeln('search "$query" · ${hits.length} of ${pi.models.length}');
+    }
+    for (var i = 0; i < hits.length; i++) {
+      final m = hits[i];
+      final mark = m.id == pi.activeModel ? '*' : ' ';
+      final flags = [
+        if (m.free) 'free',
+        if (m.live) 'live',
+        if (m.reasoning) 'reason',
+      ];
+      b.writeln('$mark ${(i + 1).toString().padLeft(3)}. '
+          '${m.id.padRight(34)}${m.providerId.padRight(13)}'
+          '${m.contextLabel.padLeft(6)}'
+          '${flags.isEmpty ? '' : '  ${flags.join(' ')}'}');
+    }
+    b.write('pick with /model <n> or /model <id>');
+    return b.toString();
+  }
+
+  /// `/keys` — what the vault actually holds, and what pi can therefore use.
+  void _keysCommand(String arg) {
+    final all = studio.providers.where((p) => p.kind == ProviderKind.llm).toList();
+    final ready = studio.agentProviders;
+    final b = StringBuffer()
+      ..writeln('key vault · ${ready.length} of ${all.length} LLM providers ready');
+    for (final p in all) {
+      final ok = p.ready && p.looksPlausible;
+      final count = studio.pi.models.where((m) => m.providerId == p.id).length;
+      b.writeln('${ok ? '●' : '○'} ${p.id.padRight(14)}'
+          '${(ok ? p.maskedKey : 'no key').padRight(20)}'
+          '${count.toString().padLeft(3)} models  ${p.model}');
+    }
+    b.write(
+      'pi routes turns through ${studio.agentProvider?.id ?? 'nothing yet'}. '
+      'Add or replace keys in the KEYS tab.',
+    );
+    _append(b.toString(), PiLineKind.sys);
+    if (arg.trim().isNotEmpty) {
+      final p = studio.byId(arg.trim());
+      if (p != null) {
+        _append(
+          '${p.label}: base ${p.baseUrl}${p.baseUrl.isEmpty ? '' : '/chat/completions'}\n'
+          'model ${p.model.isEmpty ? 'unset' : p.model} · max ${p.maxTokens} tokens',
+          PiLineKind.sys,
+        );
       }
     }
-    studio.sessions.ensurePi(model: pi.activeModel).piModel = pi.activeModel;
-    _append('model → ${pi.activeModel}', PiLineKind.info);
+  }
+
+  /// `/install` — provision the core and rebuild the catalog from the vault.
+  Future<void> _installCommand() async {
+    _running = true;
+    _append('installing pi…', PiLineKind.sys);
+    notifyListeners();
+    await studio.pi.install(providers: studio.providers);
+    _running = false;
+    notifyListeners();
+    final pi = studio.pi;
+    if (pi.state == PiInstallState.failed) {
+      _append('install failed: ${pi.lastError ?? 'unknown'}', PiLineKind.err);
+      return;
+    }
+    _append(
+      'pi ${pi.installedVersion} ready · ${pi.models.length} models from '
+      '${pi.models.map((m) => m.providerId).toSet().length} providers',
+      PiLineKind.info,
+    );
+  }
+
+  /// `/net` — why a turn failed, named precisely.
+  void _netCheck() {
+    final ready = studio.agentProviders;
+    final b = StringBuffer()
+      ..writeln('network self-check')
+      ..writeln('providers ready   ${ready.isEmpty ? 'none' : ready.map((p) => p.id).join(', ')}')
+      ..writeln('platform          ${kIsWeb ? 'web (browser CORS applies)' : 'native' }')
+      ..writeln('routing           ${studio.models.runtimeType} · direct HTTPS, no broker');
+    if (ready.isNotEmpty) {
+      final p = ready.first;
+      b.writeln('endpoint          ${p.chatEndpoint}');
+      if (kIsWeb && p.baseUrl.contains('anthropic')) {
+        b.writeln('warning           Anthropic sends no CORS headers — use '
+            'Android or an OpenAI-compatible provider on web.');
+      }
+    }
+    b.writeln();
+    b.writeln('if a turn fails with "network unreachable":');
+    b.writeln(' · the release APK needs android.permission.INTERNET');
+    b.writeln(' · a browser build needs the provider to allow CORS');
+    b.writeln(' · Ollama on localhost is unreachable from a phone');
+    _append(b.toString().trimRight(), PiLineKind.sys);
   }
 
   void _newSession() {

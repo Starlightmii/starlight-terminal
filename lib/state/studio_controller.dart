@@ -196,12 +196,22 @@ class StudioController extends ChangeNotifier implements CommandBridge {
   ///
   /// This is what makes CONSOLE a terminal rather than a command palette:
   /// there is a real working directory, real files, and real pipes-of-one.
+  ///
+  /// Commands that do real network work (`pi install`, `pi update`,
+  /// `pi models --refresh`) are answered by [shellExecAsync]; this synchronous
+  /// path serves them instantly with a wait-free answer so the console never
+  /// blocks. Use [isSlowShell] to tell them apart.
   String? shellExec(String raw) {
     final line = raw.trim();
     if (line.isEmpty) return '';
     final parts = line.split(RegExp(r'\s+'));
     final cmd = parts.first;
     final args = parts.skip(1).toList();
+
+    if (cmd == 'pi' && _piIsSlow(args)) {
+      return 'pi: `${args.isEmpty ? 'status' : args.first}` talks to the network — '
+          'run it from the CONSOLE prompt or the PI tab, where it can wait.';
+    }
 
     switch (cmd) {
       case 'pwd':
@@ -309,6 +319,49 @@ class StudioController extends ChangeNotifier implements CommandBridge {
       default:
         return null; // not a builtin
     }
+  }
+
+  /// True when [shellExecAsync] is the right entry point for this line.
+  ///
+  /// Only `pi` has network subcommands worth waiting for, so the check is
+  /// narrow on purpose: everything else stays instantaneous.
+  bool isSlowShell(String raw) {
+    final parts = raw.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty || parts.first != 'pi') return false;
+    return _piIsSlow(parts.skip(1).toList());
+  }
+
+  static bool _piIsSlow(List<String> args) {
+    if (args.isEmpty) return false;
+    final sub = args.first;
+    if (sub == '--version' || sub == '-v' || sub == 'status' || sub == 'help') {
+      return false;
+    }
+    if (sub == 'install' || sub == 'update' || sub == 'upgrade') return true;
+    if (sub == 'models') {
+      // `pi models` reads the local catalog; `--refresh` goes to the network.
+      return args.contains('--refresh') || args.contains('-r');
+    }
+    return false;
+  }
+
+  /// Async shell dispatch. Returns null only when the line is not a builtin.
+  ///
+  /// This is what makes `pi update`, `pi install` and `pi models --refresh`
+  /// actually *work* in the console: the old implementation fired them with
+  /// `unawaited()` and printed a placeholder, so the result never arrived and
+  /// the command looked broken.
+  Future<String?> shellExecAsync(String raw) async {
+    final line = raw.trim();
+    if (line.isEmpty) return '';
+    final parts = line.split(RegExp(r'\s+'));
+    final cmd = parts.first;
+    final args = parts.skip(1).toList();
+
+    if (cmd == 'pi') return _piCmdAsync(args);
+
+    // Everything else is synchronous by design.
+    return shellExec(raw);
   }
 
   String _shellGrep(List<String> args) {
@@ -485,34 +538,142 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     return pages[topic] ?? 'no manual entry for $topic. Try `man` alone.';
   }
 
-  String _piCmd(List<String> args) {
+  /// `pi <sub>` from a synchronous context.
+  ///
+  /// Only the offline subcommands land here; the network ones are routed to
+  /// [shellExecAsync] by [isSlowShell] so their output can be awaited.
+  String? _piCmd(List<String> args) => _piCmdSync(args);
+
+  String _piCmdSync(List<String> args) {
     final sub = args.isEmpty ? 'status' : args.first;
     switch (sub) {
       case 'status':
-        return 'state     ${pi.statusLabel}\n'
-            'installed ${pi.installedVersion.isEmpty ? '—' : pi.installedVersion}\n'
-            'model     ${pi.activeModel.isEmpty ? '—' : pi.activeModel}\n'
-            'provider  ${agentProvider?.id ?? 'none'}';
+      case 'info':
+        return _piStatusText();
+      case 'model':
+        // `pi model <n|id>` selects; `pi model` alone lists.
+        final pick = args.skip(1).join(' ').trim();
+        if (pick.isEmpty) return _piCmdSync(['models']);
+        return selectModel(pick);
       case 'models':
-        return pi.models.isEmpty
-            ? 'no models — run `pi install`'
-            : pi.models
-                .map((m) => '${m.id}  (${m.vendor})')
-                .join('\n');
+        // Local view of the catalog: no network, no waiting.
+        if (pi.models.isEmpty) {
+          return 'no models yet — add a key in KEYS, then `pi models --refresh`';
+        }
+        final q = args.skip(1).where((a) => !a.startsWith('-')).join(' ').trim();
+        final hits = pi.search(q);
+        if (hits.isEmpty) return 'no model matching "$q" among ${pi.models.length}';
+        return hits
+            .map((m) => '${m.id == pi.activeModel ? '*' : ' '} '
+                '${m.id}  (${m.providerId}, ${m.contextLabel}'
+                '${m.free ? ', free' : ''}${m.live ? ', live' : ''})')
+            .join('\n');
+      case 'keys':
+        final rows = _providers
+            .where((p) => p.kind == ProviderKind.llm)
+            .map((p) {
+          final ok = p.ready && p.looksPlausible;
+          final n = pi.models.where((m) => m.providerId == p.id).length;
+          return '${ok ? '●' : '○'} ${p.id.padRight(14)}'
+              '${(ok ? p.maskedKey : 'no key').padRight(20)}$n models';
+        }).join('\n');
+        return 'key vault · pi routes through ${agentProvider?.id ?? 'nothing yet'}\n$rows';
+      case 'version':
+      case '--version':
+      case '-v':
+        return pi.versionLine();
       case 'help':
-        return 'pi — agent core\n'
-            '  pi status | models | install | update';
+      case '--help':
+      case '-h':
+        return _piHelpText();
       case 'install':
-        unawaited(pi.install());
-        return 'installing pi…';
       case 'update':
-        unawaited(pi.update().then(
-              (m) => appLog.info(m, scope: 'pi'),
-            ));
-        return 'checking registry…';
+      case 'upgrade':
+        // Reached only if a caller ignored isSlowShell.
+        return 'pi: `$sub` needs the console prompt so its output can be awaited.';
       default:
-        return 'pi: unknown subcommand "$sub"';
+        return 'pi: unknown subcommand "$sub"\n${_piHelpText()}';
     }
+  }
+
+  /// Fully awaited `pi <sub>`, including the network subcommands.
+  Future<String> _piCmdAsync(List<String> args) async {
+    final sub = args.isEmpty ? 'status' : args.first;
+
+    switch (sub) {
+      case 'install':
+        appLog.info('pi install requested', scope: 'pi');
+        await pi.install(providers: _providers);
+        if (pi.state == PiInstallState.failed) {
+          return 'pi install failed: ${pi.lastError ?? 'unknown error'}\n'
+              'The catalog was still built from your KEYS, so /model works.';
+        }
+        return 'installed pi ${pi.installedVersion}\n'
+            'catalog   ${pi.models.length} models from '
+            '${pi.models.map((m) => m.providerId).toSet().length} providers\n'
+            'next      pi models --refresh  (confirm ids with each provider)';
+
+      case 'update':
+      case 'upgrade':
+        appLog.info('pi update requested', scope: 'pi');
+        final msg = await pi.update(providers: _providers);
+        appLog.info(msg, scope: 'pi');
+        return '$msg\ncatalog   ${pi.models.length} models';
+
+      case 'models':
+        final refresh =
+            args.contains('--refresh') || args.contains('-r');
+        if (refresh) {
+          final report = await pi.probeProviders(_providers);
+          appLog.info('pi models refresh · ${report.summary()}', scope: 'pi');
+          final body = await pi.listModels(query: args
+              .skip(1)
+              .where((a) => a != '--refresh' && a != '-r')
+              .join(' ')
+              .trim());
+          return '${report.summary()}\n\n$body';
+        }
+        return pi.listModels(
+          query: args.skip(1).where((a) => !a.startsWith('-')).join(' ').trim(),
+        );
+
+      default:
+        return _piCmdSync(args);
+    }
+  }
+
+  String _piStatusText() {
+    final entry = pi.activeEntry;
+    return 'state      ${pi.statusLabel}\n'
+        'installed  ${pi.installedVersion.isEmpty ? '—' : pi.installedVersion}\n'
+        'latest     ${pi.latestVersion.isEmpty ? '—' : pi.latestVersion}\n'
+        'model      ${pi.activeModel.isEmpty ? '—' : pi.activeModel}\n'
+        'provider   ${entry?.providerId.isEmpty ?? true ? agentProvider?.id ?? 'none' : entry!.providerId}\n'
+        'catalog    ${pi.models.length} models · '
+        '${pi.models.map((m) => m.providerId).toSet().length} providers\n'
+        'live ids   ${pi.probedProviders.isEmpty ? 'none confirmed — run `pi models --refresh`' : pi.probedProviders.join(', ')}';
+  }
+
+  String _piHelpText() => 'pi — agent core (${pi.installedVersion.isEmpty ? 'not installed' : 'pi ${pi.installedVersion}'})\n'
+      '  pi status            install state, active model, catalog size\n'
+      '  pi models [query]    list or search the model catalog\n'
+      '  pi models --refresh  ask each provider for its real model list\n'
+      '  pi model <n|id>      select a model (n from `pi models`)\n'
+      '  pi install           provision the core and rebuild the catalog\n'
+      '  pi update            check registry.npmjs.org for a newer release\n'
+      '  pi version           print the installed version\n'
+      '  pi --help            this text\n'
+      'In the PI tab the same surface is available as /model, /help, …';
+
+  /// `pi model <n|id>` from the console.
+  String selectModel(String arg) {
+    final hit = pi.resolve(arg);
+    if (hit == null) {
+      return 'no model matching "$arg" — `pi models` lists ${pi.models.length}';
+    }
+    pi.setModel(hit.id);
+    appLog.info('model → ${hit.label}', scope: 'pi');
+    return 'model → ${hit.id}${hit.providerId.isEmpty ? '' : ' via ${hit.providerId}'}';
   }
 
   /// Bind an agent to the pi backend (or back to the offline planner).
@@ -522,6 +683,40 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     a.engine = enabled ? AgentEngine.pi : AgentEngine.local;
     if (model != null) a.piModel = model;
     _persistAgents();
+    _notify();
+  }
+
+  /// Force pi (and every agent turn) to route through one provider.
+  ///
+  /// Keys are ordered "ready first" by [`agentProviders`], so without an
+  /// explicit pin a freshly saved OpenRouter key could still be shadowed by an
+  /// earlier provider that happens to sort first. This makes the choice in the
+  /// UI the choice the runtime actually makes.
+  void setPiProvider(String providerId) {
+    final p = byId(providerId);
+    if (p == null) return;
+    if (!p.ready) {
+      appLog.warn('$providerId is not ready — key missing', scope: 'keys');
+      return;
+    }
+    if (p.model.trim().isNotEmpty) pi.setModel(p.model.trim());
+    pi.seedFromProviders(_providers);
+    // Move the chosen provider to the front of the vault so `agentProvider`
+    // resolves to it for both agents and the pi session.
+    final i = _providers.indexWhere((x) => x.id == providerId);
+    if (i > 0) {
+      final chosen = _providers.removeAt(i);
+      _providers.insert(0, chosen);
+    }
+    // Bind any agent that was still pointing at an unusable provider.
+    for (final a in _agents) {
+      final bound = byId(a.providerId);
+      if (bound == null || !bound.ready) a.providerId = providerId;
+      if (a.piModel.isEmpty) a.piModel = p.model.trim();
+    }
+    _persistProviders();
+    _persistAgents();
+    appLog.info('pi provider → $providerId', scope: 'keys');
     _notify();
   }
 
@@ -646,6 +841,7 @@ class StudioController extends ChangeNotifier implements CommandBridge {
   static const _kSessions = 'starlight.sessions.v1';
   static const _kMemories = 'starlight.memories.v1';
   static const _kUsers = 'starlight.users.v1';
+  static const _kCatalog = 'starlight.pi.catalog.v1';
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -655,6 +851,7 @@ class StudioController extends ChangeNotifier implements CommandBridge {
       _restoreProviders();
       _restoreAgents();
       _restoreEffects();
+      _restoreCatalog();
       _restoreJournal();
     } catch (_) {
       // Persistence is optional; the studio works in-memory regardless.
@@ -670,12 +867,19 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     memory.addListener(_notify);
     sessions.addListener(_notify);
     piSession.addListener(_notify);
+    // Build the model catalog from the operator's vault *before* the session
+    // prints its banner, so the first line of PI reports the real catalogue
+    // instead of "0 models". Seeding after boot() was why a saved OpenRouter
+    // key looked like it had produced nothing.
+    pi.seedFromProviders(_providers);
     piSession.boot();
     appLog.info('studio online · ${_agents.length} agents', scope: 'system');
     // Autonomous runs: one heartbeat for the fleet.
     scheduler.start();
     // Provision the agent core on first boot so the terminal has a `pi` to run.
-    if (pi.state != PiInstallState.installed) unawaited(pi.install());
+    if (pi.state != PiInstallState.installed) {
+      unawaited(pi.install(providers: _providers));
+    }
     _notify();
   }
 
@@ -1173,12 +1377,21 @@ class StudioController extends ChangeNotifier implements CommandBridge {
   }
 
   Future<void> _persistProviders() async {
+    // Every vault change re-seeds the pi catalog. Without this, saving a key
+    // leaves `pi models` stale until the next app launch — which is exactly
+    // how a freshly added OpenRouter key used to vanish.
+    pi.seedFromProviders(_providers);
     try {
       await _prefs?.setString(
         _kProviders,
         jsonEncode(_providers.map((p) => p.toJson()).toList()),
       );
+      await _prefs?.setString(_kCatalog, pi.encodeCatalog());
     } catch (_) {/* ignore */}
+  }
+
+  void _restoreCatalog() {
+    pi.loadCatalog(_prefs?.getString(_kCatalog));
   }
 
   Future<void> _persistAgents() async {

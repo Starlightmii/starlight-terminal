@@ -33,13 +33,49 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
   int _lastLineCount = 0;
   List<String> _suggest = const [];
 
-  /// Every command the console actually understands, shell and builtin.
-  static const List<String> _index = [
-    'help', 'ls', 'cd', 'pwd', 'cat', 'echo', 'mkdir', 'touch', 'rm', 'df',
-    'clear', 'history', 'pi', 'keys', 'fx', 'agent', 'ask', 'fleet',
-    'note', 'notes', 'sky', 'top', 'star', 'moon', 'map', 'theme', 'whoami',
-    'status', 'about', 'banner', 'login',
-  ];
+  /// Every command the console actually understands: shell builtins first,
+  /// then the terminal's own grammar. Descriptions double as the popup text so
+  /// a suggestion explains itself instead of just autocompleting a word.
+  static const Map<String, String> _index = {
+    'help': 'list shell and console commands',
+    'ls': 'list the current directory',
+    'cd': 'change directory',
+    'pwd': 'print the working directory',
+    'cat': 'print a file',
+    'echo': 'print text, or write it with >',
+    'mkdir': 'create a directory',
+    'touch': 'create an empty file',
+    'rm': 'delete a file',
+    'df': 'filesystem usage',
+    'clear': 'clear the scrollback',
+    'history': 'recall previous commands',
+    'pi': 'the agent core: status|models|install|update',
+    'pi status': 'install state and active model',
+    'pi models': 'list the model catalog',
+    'pi models --refresh': 'confirm model ids with each provider',
+    'pi install': 'provision the core and rebuild the catalog',
+    'pi update': 'check the npm registry for a new release',
+    'pi --help': 'every pi subcommand',
+    'keys': 'show the key vault',
+    'fx': 'switch the background effect',
+    'agent': 'list or run agents',
+    'ask': 'one question, one answer',
+    'fleet': 'dispatch a brief to the fleet',
+    'note': 'save a memory',
+    'notes': 'list memories',
+    'map': 'print the sky map',
+    'theme': 'switch palette',
+    'status': 'runtime status',
+    'about': 'what this terminal is',
+    'banner': 'redraw the banner',
+    'login': 'sign in to a local account',
+    'man': 'manual for a builtin',
+    'grep': 'search files for a pattern',
+    'tree': 'one-level directory tree',
+    'env': 'print the environment',
+  };
+
+  bool _running = false;
 
   @override
   void initState() {
@@ -227,12 +263,12 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Text(
-            '❯',
+            _running ? '◐' : '❯',
             style: TextStyle(
               fontFamily: 'Mono',
               fontSize: fontSize + 2,
               fontWeight: FontWeight.w700,
-              color: palette.bright,
+              color: _running ? palette.ok : palette.bright,
             ),
           ),
           const SizedBox(width: 7),
@@ -357,13 +393,16 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
   /// Prefix-match against the command index, shell builtins included.
   void _updateSuggestions(String value) {
     final v = value.trim();
-    if (v.isEmpty || v.contains(' ')) {
+    if (v.isEmpty) {
       if (_suggest.isNotEmpty) setState(() => _suggest = const []);
       return;
     }
-    final hits = _index.where((c) => c.startsWith(v) && c != v).toList();
-    if (hits.length == _suggest.length &&
-        hits.every(_suggest.contains)) {
+    // Match on the whole line so `pi models` suggests itself, not just `pi`.
+    final hits = _index.entries
+        .where((e) => e.key.startsWith(v) && e.key != v)
+        .map((e) => '${e.key}  ${e.value}')
+        .toList();
+    if (hits.length == _suggest.length && hits.every(_suggest.contains)) {
       return;
     }
     setState(() => _suggest = hits);
@@ -372,7 +411,8 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
   String? _complete(String value) {
     final v = value.trim();
     if (v.isEmpty) return null;
-    final hits = _index.where((c) => c.startsWith(v)).toList();
+    final hits =
+        _index.keys.where((c) => c.startsWith(v)).toList();
     if (hits.isEmpty) return null;
     if (hits.length == 1) return '${hits.first} ';
     // Longest common prefix.
@@ -393,7 +433,8 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
     _focus.requestFocus();
   }
 
-  void _send() {
+  Future<void> _send() async {
+    if (_running) return;
     final value = _text.text;
     _text.clear();
     setState(() => _suggest = const []);
@@ -407,15 +448,26 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
     final studio = context.read<StudioController>();
 
     // 1. Shell builtins run against the VFS.
-    final shell = studio.shellExec(value);
+    //
+    // Network subcommands (`pi install`, `pi update`, `pi models --refresh`)
+    // are awaited for real. The old code called `shellExec` which fired them
+    // with `unawaited()` and printed "installing pi…" — the result never came
+    // back, so every one of those commands looked broken.
+    final slow = studio.isSlowShell(value);
+    if (slow) setState(() => _running = true);
+    String? shell;
+    try {
+      shell = slow
+          ? await studio.shellExecAsync(value)
+          : studio.shellExec(value);
+    } finally {
+      if (slow && mounted) setState(() => _running = false);
+    }
+
     if (shell != null) {
       term.print('❯ $value', tone: Tone.heading);
-      if (shell.isEmpty) {
-        // `cd` and friends legitimately produce nothing.
-      } else {
-        for (final l in shell.split('\n')) {
-          if (l.isNotEmpty) term.print(l);
-        }
+      for (final l in shell.split('\n')) {
+        if (l.isNotEmpty) term.print(l);
       }
       studio.appLog.info(
         shell.isEmpty ? value : shell.split('\n').first,
@@ -436,7 +488,14 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
   Widget _quickKeys(TerminalController term, Palette palette) {
     // Only commands that demonstrably work — the old chips advertised a
     // sky-only vocabulary that made the console feel like a toy.
-    const keys = <String>['ls', 'help', 'pi status', 'keys', 'fx', 'agent'];
+    const keys = <String>[
+      'pi status',
+      'pi models',
+      'pi --help',
+      'help',
+      'keys',
+      'agent',
+    ];
     return SizedBox(
       height: 26,
       child: ListView.separated(

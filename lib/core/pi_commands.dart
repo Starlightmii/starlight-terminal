@@ -41,16 +41,21 @@ const Map<PiCommandGroup, String> kPiGroupLabel = {
 /// The built-in command set, mirroring pi's own reference.
 const List<PiCommand> kPiCommands = [
   // ── models & settings ───────────────────────────────────────────────────
-  PiCommand('/model', '/model [provider/model]',
-      'Select a model', argHint: '[provider/model]'),
+  PiCommand('/model', '/model [n|provider/model]',
+      'Select a model (n from /models)', argHint: '[n|id]'),
+  PiCommand('/models', '/models [query] [--refresh]',
+      'List or search the model catalog', argHint: '[query]'),
   PiCommand('/thinking', '/thinking [level]',
       'Set the thinking level', argHint: '[off|low|medium|high]'),
   PiCommand('/scoped-models', '/scoped-models',
       'Configure the models used by interactive cycling'),
   PiCommand('/login', '/login [provider]', 'Add provider authentication',
       argHint: '[provider]'),
-  PiCommand('/logout', '/logout', 'Remove provider authentication'),
-  PiCommand('/settings', '/settings', 'Open settings'),
+  PiCommand('/logout', '/logout [provider]', 'Remove a provider key',
+      argHint: '[provider]'),
+  PiCommand('/settings', '/settings', 'Show provider and runtime settings'),
+  PiCommand('/keys', '/keys [provider]', 'What the key vault holds',
+      argHint: '[provider]'),
 
   // ── sessions & context ──────────────────────────────────────────────────
   PiCommand('/new', '/new', 'Start a new session',
@@ -90,6 +95,11 @@ const List<PiCommand> kPiCommands = [
   PiCommand('/hotkeys', '/hotkeys', 'Show active key bindings',
       group: PiCommandGroup.runtime),
   PiCommand('/changelog', '/changelog', "Show what's new",
+      group: PiCommandGroup.runtime),
+  PiCommand('/install', '/install', 'Provision the core and rebuild the catalog',
+      group: PiCommandGroup.runtime),
+  PiCommand('/net', '/net', 'Diagnose why a turn failed'),
+  PiCommand('/commands', '/commands', 'Alias for /help',
       group: PiCommandGroup.runtime),
   PiCommand('/version', '/version', 'Print the pi version',
       group: PiCommandGroup.runtime),

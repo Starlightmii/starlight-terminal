@@ -140,7 +140,9 @@ class _PiScreenState extends State<PiScreen> {
         ),
         const SizedBox(height: 6),
         _composer(studio, palette, session),
-        const SizedBox(height: 5),
+        const SizedBox(height: 4),
+        _commandStrip(studio, palette),
+        const SizedBox(height: 4),
         TermKeyBar(
           palette: palette,
           cursor: _cursor,
@@ -164,6 +166,60 @@ class _PiScreenState extends State<PiScreen> {
           ],
         ),
       ],
+    );
+  }
+
+  /// One tap to the commands people actually use. Every entry fills the field
+  /// rather than executing, so a tap is a starting point, not a commitment.
+  Widget _commandStrip(StudioController studio, Palette palette) {
+    const items = <String>[
+      '/help',
+      '/models',
+      '/model',
+      '/thinking',
+      '/keys',
+      '/net',
+      '/session',
+      '/status',
+      '/new',
+      '/clear',
+      '/update',
+    ];
+    return SizedBox(
+      height: 26,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: items.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 5),
+        itemBuilder: (context, i) {
+          final cmd = items[i];
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              _cursor.setText(cmd);
+              studio.piSession.onInputChanged(cmd);
+              _focus.requestFocus();
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                border: Border.all(color: palette.line),
+                color: palette.panel.withValues(alpha: 0.6),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                cmd,
+                style: TextStyle(
+                  fontFamily: 'Mono',
+                  fontSize: 9,
+                  letterSpacing: 0.4,
+                  color: palette.mid,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -258,19 +314,43 @@ class _PiScreenState extends State<PiScreen> {
               ),
             ],
           ),
-          if (provider == null || pi.updateAvailable) ...[
-            const SizedBox(height: 3),
-            Text(
-              provider == null
-                  ? 'no LLM key — add one in KEYS; pi runs on your own key'
-                  : 'update available ${pi.installedVersion} → ${pi.latestVersion} — run /update',
-              style: TextStyle(
-                fontFamily: 'Mono',
-                fontSize: 8.5,
-                color: palette.err,
+          const SizedBox(height: 3),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  provider == null
+                      ? 'no LLM key — add one in KEYS; pi runs on your own key'
+                      : '${provider.id} · ${studio.pi.models.length} models'
+                          '${studio.pi.probedProviders.isEmpty ? ' · ids unconfirmed' : ' · confirmed'}'
+                          '${pi.updateAvailable ? ' · update ${pi.latestVersion}' : ''}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'Mono',
+                    fontSize: 8.5,
+                    color: provider == null ? palette.err : palette.dim,
+                  ),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(width: 6),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  _cursor.setText('/net');
+                  _refreshSuggestions(studio);
+                },
+                child: Text(
+                  '/net',
+                  style: TextStyle(
+                    fontFamily: 'Mono',
+                    fontSize: 8,
+                    color: palette.warn,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

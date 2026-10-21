@@ -296,6 +296,7 @@ class TermPanel extends StatelessWidget {
     this.trailing,
     this.padding = const EdgeInsets.all(12),
     this.accent = false,
+    this.expand = true,
   });
 
   final Palette palette;
@@ -305,9 +306,19 @@ class TermPanel extends StatelessWidget {
   final EdgeInsets padding;
   final bool accent;
 
+  /// Whether the body should fill the panel's height.
+  ///
+  /// A panel used as a *header* inside a `Column` has unbounded height, and an
+  /// `Expanded` body under those constraints throws
+  /// `RenderFlex children have non-zero flex but incoming height constraints
+  /// are unbounded`. Stacked panels (MEMORY header, AGENTS bars, KEYS summary)
+  /// therefore pass `expand: false` and the body shrink-wraps instead.
+  final bool expand;
+
   @override
   Widget build(BuildContext context) {
     final borderColor = accent ? palette.mid : palette.line;
+    final body = Padding(padding: padding, child: child);
     return Container(
       decoration: BoxDecoration(
         color: palette.panel.withValues(alpha: 0.72),
@@ -338,11 +349,12 @@ class TermPanel extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
+        // A shrink-wrapping panel must not use `mainAxisSize: max`, or it will
+        // still try to fill an infinite height.
+        mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
         children: [
           if (title != null) _titleBar(borderColor),
-          Expanded(
-            child: Padding(padding: padding, child: child),
-          ),
+          if (expand) Expanded(child: body) else body,
         ],
       ),
     );

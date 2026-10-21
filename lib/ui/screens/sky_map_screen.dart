@@ -10,10 +10,13 @@ import '../widgets/chrome.dart';
 
 /// MEMORY — every durable thing learned in a conversation, laid out as a map.
 ///
-/// The old version plotted a star catalogue on a sky chart. Stars were never
-/// the point of this app, and they crowded out the thing that actually
-/// accumulates: memory. Each memory is a node; nodes sharing a session pull
-/// together, and pinning raises a node's weight so it stays through eviction.
+/// Each memory is a node; nodes sharing a session pull together, and pinning
+/// raises a node's weight so it stays through eviction.
+///
+/// Hit-testing used to be computed against the *whole screen's* RenderBox while
+/// the tap offset was local to the map, so every tap missed and the section read
+/// as "not clickable". The map now owns its own `LayoutBuilder` size, and a
+/// readable list below the chart gives every memory a guaranteed tap target.
 class SkyMapScreen extends StatefulWidget {
   const SkyMapScreen({super.key});
 
@@ -25,6 +28,7 @@ class _SkyMapScreenState extends State<SkyMapScreen> {
   String _source = '';
   String _query = '';
   Memory? _selected;
+  bool _listMode = false;
 
   static const Map<String, String> _sources = {
     '': 'ALL',
@@ -50,6 +54,11 @@ class _SkyMapScreenState extends State<SkyMapScreen> {
       return true;
     }).toList();
 
+    // A selection that the current filter hides would strand the detail panel.
+    if (_selected != null && !visible.any((m) => m.id == _selected!.id)) {
+      _selected = null;
+    }
+
     return Column(
       children: [
         _header(studio, palette, mem, visible.length),
@@ -57,30 +66,51 @@ class _SkyMapScreenState extends State<SkyMapScreen> {
         Expanded(
           child: TermPanel(
             palette: palette,
-            title: 'MEMORY MAP',
+            title: _listMode ? 'MEMORY INDEX' : 'MEMORY MAP',
             accent: true,
             padding: const EdgeInsets.all(6),
-            trailing: Text(
-              '${visible.length} nodes',
-              style: TextStyle(
-                fontFamily: 'Mono',
-                fontSize: 8.5,
-                color: palette.dim,
-              ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${visible.length} nodes',
+                  style: TextStyle(
+                    fontFamily: 'Mono',
+                    fontSize: 8.5,
+                    color: palette.dim,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => setState(() => _listMode = !_listMode),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: palette.line),
+                    ),
+                    child: Text(
+                      _listMode ? '◉ MAP' : '☰ LIST',
+                      style: TextStyle(
+                        fontFamily: 'Mono',
+                        fontSize: 8,
+                        letterSpacing: 1,
+                        fontWeight: FontWeight.w700,
+                        color: palette.mid,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
             child: visible.isEmpty
                 ? _empty(palette)
-                : GestureDetector(
-                    onTapDown: (d) => _hit(d.localPosition, visible),
-                    child: CustomPaint(
-                      painter: _MemoryMapPainter(
-                        memories: visible,
-                        palette: palette,
-                        selected: _selected?.id,
-                      ),
-                      child: const SizedBox.expand(),
-                    ),
-                  ),
+                : _listMode
+                    ? _indexList(palette, visible)
+                    : _chart(palette, visible),
           ),
         ),
         const SizedBox(height: 8),
@@ -89,14 +119,41 @@ class _SkyMapScreenState extends State<SkyMapScreen> {
     );
   }
 
-  void _hit(Offset at, List<Memory> visible) {
-    final box = context.findRenderObject() as RenderBox?;
-    if (box == null) return;
-    // Nodes are laid out on a spiral in normalised space; find the nearest.
+  // ── Chart ──────────────────────────────────────────────────────────────
+
+  Widget _chart(Palette palette, List<Memory> visible) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = Size(constraints.maxWidth, constraints.maxHeight);
+        return GestureDetector(
+          // opaque, not translucent: taps on the empty space between nodes
+          // should still clear the selection rather than fall through.
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (d) => _hit(d.localPosition, visible, size),
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: CustomPaint(
+              painter: _MemoryMapPainter(
+                memories: visible,
+                palette: palette,
+                selected: _selected?.id,
+              ),
+              child: const SizedBox.expand(),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Find the nearest node to [at] in *map-local* coordinates.
+  void _hit(Offset at, List<Memory> visible, Size size) {
     Memory? best;
-    var bestD = 40.0;
+    // Generous radius: a fingertip is about 40dp wide, and the spiral can put
+    // two nodes close together on a narrow phone.
+    var bestD = 44.0;
     for (var i = 0; i < visible.length; i++) {
-      final p = _MemoryMapPainter.nodePosition(i, visible.length, box.size);
+      final p = _MemoryMapPainter.nodePosition(i, visible.length, size);
       final d = (p - at).distance;
       if (d < bestD) {
         bestD = d;
@@ -105,6 +162,81 @@ class _SkyMapScreenState extends State<SkyMapScreen> {
     }
     setState(() => _selected = best);
   }
+
+  Widget _indexList(Palette palette, List<Memory> visible) {
+    return ListView.separated(
+      padding: EdgeInsets.zero,
+      itemCount: visible.length,
+      separatorBuilder: (_, __) => Divider(
+        height: 1,
+        color: palette.line.withValues(alpha: 0.5),
+      ),
+      itemBuilder: (context, i) {
+        final m = visible[i];
+        final selected = m.id == _selected?.id;
+        final tint = _sourceColor(palette, m.source);
+        return InkWell(
+          onTap: () => setState(() => _selected = m),
+          child: Container(
+            color: selected ? tint.withValues(alpha: 0.10) : null,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 5,
+                  height: 5,
+                  margin: const EdgeInsets.only(top: 5, right: 7),
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: tint),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _oneLine(m.text, 120),
+                        style: TextStyle(
+                          fontFamily: 'Mono',
+                          fontSize: 10,
+                          height: 1.35,
+                          color: selected ? palette.bright : palette.mid,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${m.source.name} · ${m.ageLabel}'
+                        '${m.starId != null ? ' · ★ pinned' : ''}',
+                        style: TextStyle(
+                          fontFamily: 'Mono',
+                          fontSize: 8,
+                          color: palette.dim,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  static Color _sourceColor(Palette p, MemorySource s) => switch (s) {
+        MemorySource.pi => p.ok,
+        MemorySource.agent => p.warn,
+        MemorySource.bot => p.mid,
+        MemorySource.console => p.dim,
+        MemorySource.system => p.err,
+      };
+
+  static String _oneLine(String s, int max) {
+    final flat = s.replaceAll('\n', ' ').trim();
+    return flat.length > max ? '${flat.substring(0, max)}…' : flat;
+  }
+
+  // ── Header ─────────────────────────────────────────────────────────────
 
   Widget _header(
     StudioController studio,
@@ -115,6 +247,8 @@ class _SkyMapScreenState extends State<SkyMapScreen> {
     final breakdown = mem.sourceBreakdown;
     return TermPanel(
       palette: palette,
+      // Header: unbounded height, so the body must shrink-wrap.
+      expand: false,
       padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -160,6 +294,7 @@ class _SkyMapScreenState extends State<SkyMapScreen> {
                 final on = _source == e.key;
                 final n = e.key.isEmpty ? mem.length : (breakdown[e.key] ?? 0);
                 return GestureDetector(
+                  behavior: HitTestBehavior.opaque,
                   onTap: () => setState(() => _source = e.key),
                   child: Container(
                     margin: const EdgeInsets.only(right: 5),
@@ -229,7 +364,11 @@ class _SkyMapScreenState extends State<SkyMapScreen> {
           children: [
             Text(
               '◌',
-              style: TextStyle(fontFamily: 'Mono', fontSize: 30, color: palette.dim),
+              style: TextStyle(
+                fontFamily: 'Mono',
+                fontSize: 30,
+                color: palette.dim,
+              ),
             ),
             const SizedBox(height: 10),
             Text(
@@ -260,8 +399,10 @@ class _SkyMapScreenState extends State<SkyMapScreen> {
   }
 
   Widget _detail(Palette palette, Memory m) {
+    final tint = _sourceColor(palette, m.source);
     return TermPanel(
       palette: palette,
+      expand: false,
       padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -275,7 +416,7 @@ class _SkyMapScreenState extends State<SkyMapScreen> {
                   fontSize: 8.5,
                   letterSpacing: 1.2,
                   fontWeight: FontWeight.w700,
-                  color: palette.warn,
+                  color: tint,
                 ),
               ),
               const SizedBox(width: 8),
@@ -297,12 +438,25 @@ class _SkyMapScreenState extends State<SkyMapScreen> {
                     color: palette.warn,
                   ),
                 ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(() => _selected = null),
+                child: Text(
+                  '✕',
+                  style: TextStyle(
+                    fontFamily: 'Mono',
+                    fontSize: 10,
+                    color: palette.dim,
+                  ),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 4),
           Text(
             m.text,
-            maxLines: 3,
+            maxLines: 4,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontFamily: 'Mono',
@@ -317,10 +471,9 @@ class _SkyMapScreenState extends State<SkyMapScreen> {
   }
 }
 
-/// Lays memories out on an Archimedean spiral, one arm per source.
+/// Lays memories out on an Archimedean spiral.
 ///
-/// A spiral keeps every node reachable without collisions as the count grows,
-/// and grouping by source means the same conversation clusters visually.
+/// A spiral keeps every node reachable without collisions as the count grows.
 class _MemoryMapPainter extends CustomPainter {
   _MemoryMapPainter({
     required this.memories,
@@ -334,7 +487,8 @@ class _MemoryMapPainter extends CustomPainter {
 
   static Offset nodePosition(int i, int total, Size size) {
     final c = Offset(size.width / 2, size.height / 2);
-    final maxR = math.min(size.width, size.height) * 0.44;
+    // 0.40 leaves room for the glow halo without clipping at the panel edge.
+    final maxR = math.min(size.width, size.height) * 0.40;
     final t = total <= 1 ? 0.0 : i / total;
     final angle = i * 2.399963; // golden angle spreads the arms evenly
     final r = maxR * math.sqrt(t);
@@ -344,7 +498,7 @@ class _MemoryMapPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final c = Offset(size.width / 2, size.height / 2);
-    final maxR = math.min(size.width, size.height) * 0.44;
+    final maxR = math.min(size.width, size.height) * 0.40;
 
     // Reference rings.
     final ring = Paint()
@@ -381,7 +535,7 @@ class _MemoryMapPainter extends CustomPainter {
       final p = nodePosition(i, memories.length, size);
       final isSel = m.id == selected;
       final pinned = m.starId != null && m.starId!.isNotEmpty;
-      final r = 2.2 + (m.weight.clamp(0.0, 1.0) * 2.6) + (pinned ? 1.2 : 0);
+      final r = 2.4 + (m.weight.clamp(0.0, 1.0) * 2.6) + (pinned ? 1.2 : 0);
 
       final color = switch (m.source) {
         MemorySource.pi => palette.ok,
