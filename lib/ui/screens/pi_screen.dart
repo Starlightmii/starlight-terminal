@@ -6,7 +6,7 @@ import 'package:provider/provider.dart';
 import '../../core/model_client.dart';
 import '../../core/palette.dart';
 import '../../core/pi_core.dart';
-import '../../core/providers.dart';
+
 import '../../core/session_store.dart';
 import '../../state/studio_controller.dart';
 import '../widgets/chrome.dart';

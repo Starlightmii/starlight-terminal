@@ -53,6 +53,96 @@ class _AgentsScreenState extends State<AgentsScreen> {
   }
 
   /// Autonomous-run status: heartbeat, armed count, recent firings.
+
+  /// Craft a new agent: a name plus the persona that shapes its turns.
+  Future<void> _craftDialog(StudioController studio, Palette palette) async {
+    final name = TextEditingController();
+    final persona = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: palette.panel,
+        shape: const RoundedRectangleBorder(),
+        title: Text(
+          'CRAFT AGENT',
+          style: TextStyle(
+            fontFamily: 'Mono',
+            fontSize: 11,
+            letterSpacing: 1.4,
+            fontWeight: FontWeight.w700,
+            color: palette.bright,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _field(name, palette, 'NAME', 'e.g. SCOUT'),
+            const SizedBox(height: 8),
+            _field(persona, palette, 'PERSONA', 'what it does, how it answers',
+                lines: 3),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('CANCEL',
+                style: TextStyle(
+                    fontFamily: 'Mono', fontSize: 9, color: palette.dim)),
+          ),
+          TextButton(
+            onPressed: () {
+              final n = name.text.trim();
+              if (n.isEmpty) return;
+              studio.addAgent(
+                name: n,
+                persona: persona.text.trim().isEmpty
+                    ? 'You are $n, a helpful agent running on the pi backend.'
+                    : persona.text.trim(),
+              );
+              studio.appLog.info('crafted agent $n', scope: 'agents');
+              Navigator.pop(ctx);
+            },
+            child: Text('CREATE',
+                style: TextStyle(
+                    fontFamily: 'Mono', fontSize: 9, color: palette.bright)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _field(
+    TextEditingController c,
+    Palette palette,
+    String label,
+    String hint, {
+    int lines = 1,
+  }) {
+    return TextField(
+      controller: c,
+      maxLines: lines,
+      style: TextStyle(fontFamily: 'Mono', fontSize: 10, color: palette.bright),
+      cursorColor: palette.bright,
+      decoration: InputDecoration(
+        isDense: true,
+        labelText: label,
+        hintText: hint,
+        labelStyle: TextStyle(
+            fontFamily: 'Mono', fontSize: 9, color: palette.dim),
+        hintStyle:
+            TextStyle(fontFamily: 'Mono', fontSize: 9, color: palette.dim),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.zero,
+          borderSide: BorderSide(color: palette.line),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.zero,
+          borderSide: BorderSide(color: palette.bright),
+        ),
+      ),
+    );
+  }
+
   Widget _schedulerBar(StudioController studio, Palette palette) {
     final sch = studio.scheduler;
     final armed = sch.armedCount;
@@ -261,16 +351,41 @@ class _AgentsScreenState extends State<AgentsScreen> {
     final agents = studio.agents;
     return TermPanel(
       palette: palette,
-      title: 'FLEET',
+      title: 'AGENTS',
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-      trailing: Text(
-        '${agents.where((a) => a.busy).length} ACTIVE',
-        style: TextStyle(
-          fontFamily: 'Mono',
-          fontSize: 8.5,
-          letterSpacing: 1.1,
-          color: palette.dim,
-        ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '${agents.where((a) => a.busy).length} ACTIVE',
+            style: TextStyle(
+              fontFamily: 'Mono',
+              fontSize: 8.5,
+              letterSpacing: 1.1,
+              color: palette.dim,
+            ),
+          ),
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: () => _craftDialog(studio, palette),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                border: Border.all(color: palette.bright.withValues(alpha: 0.5)),
+              ),
+              child: Text(
+                '+ CRAFT',
+                style: TextStyle(
+                  fontFamily: 'Mono',
+                  fontSize: 8,
+                  letterSpacing: 1.1,
+                  fontWeight: FontWeight.w700,
+                  color: palette.bright,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
       child: ListView.separated(
         padding: EdgeInsets.zero,

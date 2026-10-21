@@ -839,44 +839,25 @@ class AgentEvent {
   final String text;
 }
 
-/// Default agent roster — four specialists so multi-agent runs are meaningful.
+/// Default roster: a single research agent.
+///
+/// The old build shipped four specialists that were scenery for a star
+/// catalogue. One agent that actually does something is worth more — the
+/// RESEARCHER takes a prompt and works it on the pi backend. Further agents
+/// are crafted at runtime from the AGENTS screen.
 abstract final class AgentPresets {
   static List<AgentRuntime> build() => <AgentRuntime>[
         AgentRuntime(
-          id: 'surveyor',
-          name: 'SURVEYOR',
+          id: 'researcher',
+          name: 'RESEARCHER',
           persona:
-              'You survey the sky. You report what is above the horizon and '
-              'summarise conditions concisely.',
-          providerId: 'groq',
+              'You are a research agent. Given a question, you break it into '
+              'sub-questions, state what is known, what is uncertain, and what '
+              'to check next. You never invent sources. You answer in tight '
+              'plain prose with a short numbered list of findings and a final '
+              '"NEXT" line.',
+          providerId: '',
           colorIndex: 0,
-        ),
-        AgentRuntime(
-          id: 'navigator',
-          name: 'NAVIGATOR',
-          persona:
-              'You handle coordinates and time. You resolve star positions and '
-              'explain where to look.',
-          providerId: 'openai',
-          colorIndex: 1,
-        ),
-        AgentRuntime(
-          id: 'scribe',
-          name: 'SCRIBE',
-          persona:
-              'You keep the observing log. You record notes faithfully and '
-              'never invent observations.',
-          providerId: 'groq',
-          colorIndex: 2,
-        ),
-        AgentRuntime(
-          id: 'curator',
-          name: 'CURATOR',
-          persona:
-              'You tune the terminal look: palettes and background effects. '
-              'You favour legibility.',
-          providerId: 'openai',
-          colorIndex: 3,
         ),
       ];
 }

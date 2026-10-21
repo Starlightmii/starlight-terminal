@@ -13,6 +13,7 @@ import '../core/memory.dart';
 import '../core/palette.dart';
 import '../core/model_client.dart';
 import '../core/pi_core.dart';
+import '../core/users.dart';
 import '../core/vfs.dart';
 import '../core/providers.dart';
 import '../core/session_store.dart';
@@ -96,6 +97,7 @@ class StudioController extends ChangeNotifier implements CommandBridge {
   final PiCore pi = PiCore();
   final ModelClient models = ModelClient();
   final Vfs fs = Vfs();
+  final UserStore users = UserStore();
 
   /// Ready LLM providers, best first — what the agent actually runs on.
   List<Provider> get agentProviders =>
@@ -186,6 +188,104 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     }
     onEvent(agent, AgentEvent(kind: AgentEventKind.message, text: reply));
     agent.setState(AgentRunState.idle, 'done');
+  }
+
+  /// Executes a shell command against [fs]. Returns null when the command is
+  /// not a shell builtin, so the terminal can fall back to its own grammar.
+  ///
+  /// This is what makes CONSOLE a terminal rather than a command palette:
+  /// there is a real working directory, real files, and real pipes-of-one.
+  String? shellExec(String raw) {
+    final line = raw.trim();
+    if (line.isEmpty) return '';
+    final parts = line.split(RegExp(r'\s+'));
+    final cmd = parts.first;
+    final args = parts.skip(1).toList();
+
+    switch (cmd) {
+      case 'pwd':
+        return fs.cwd;
+      case 'cd':
+        if (args.isEmpty) {
+          fs.cd('/home/user');
+          return '';
+        }
+        if (!fs.cd(args.first)) return 'cd: no such directory: ${args.first}';
+        return '';
+      case 'ls':
+        final entries = fs.list(args.isEmpty ? '.' : args.first);
+        if (entries == null) return 'ls: not a directory: ${args.isEmpty ? '.' : args.first}';
+        if (entries.isEmpty) return '';
+        return entries
+            .map((e) => e.value ? '${e.key}/' : e.key)
+            .join('   ');
+      case 'cat':
+        if (args.isEmpty) return 'usage: cat <file>';
+        final body = fs.read(args.first);
+        return body ?? 'cat: no such file: ${args.first}';
+      case 'mkdir':
+        if (args.isEmpty) return 'usage: mkdir <dir>';
+        return fs.mkdir(args.first) ? '' : 'mkdir: exists: ${args.first}';
+      case 'touch':
+        if (args.isEmpty) return 'usage: touch <file>';
+        fs.write(args.first, '');
+        return '';
+      case 'rm':
+        if (args.isEmpty) return 'usage: rm <path>';
+        return fs.remove(args.first) ? '' : 'rm: no such path: ${args.first}';
+      case 'echo':
+        final text = args.join(' ');
+        // `echo text > file` writes through.
+        final gt = text.indexOf('>');
+        if (gt >= 0) {
+          final target = text.substring(gt + 1).trim();
+          if (target.isNotEmpty) {
+            fs.write(target, text.substring(0, gt).trim());
+            return '';
+          }
+        }
+        return text;
+      case 'df':
+        return 'fs      files\n${fs.fileCount.toString().padLeft(6)} ${fs.prompt}';
+      case 'whoami':
+        return 'operator';
+      case 'uname':
+        return 'Starlight Terminal · ${pi.statusLabel}';
+      case 'pi':
+        return _piCmd(args);
+      default:
+        return null; // not a builtin
+    }
+  }
+
+  String _piCmd(List<String> args) {
+    final sub = args.isEmpty ? 'status' : args.first;
+    switch (sub) {
+      case 'status':
+        return 'state     ${pi.statusLabel}\n'
+            'installed ${pi.installedVersion.isEmpty ? '—' : pi.installedVersion}\n'
+            'model     ${pi.activeModel.isEmpty ? '—' : pi.activeModel}\n'
+            'provider  ${agentProvider?.id ?? 'none'}';
+      case 'models':
+        return pi.models.isEmpty
+            ? 'no models — run `pi install`'
+            : pi.models
+                .map((m) => '${m.id}  (${m.vendor})')
+                .join('\n');
+      case 'help':
+        return 'pi — agent core\n'
+            '  pi status | models | install | update';
+      case 'install':
+        unawaited(pi.install());
+        return 'installing pi…';
+      case 'update':
+        unawaited(pi.update().then(
+              (m) => appLog.info(m, scope: 'pi'),
+            ));
+        return 'checking registry…';
+      default:
+        return 'pi: unknown subcommand "$sub"';
+    }
   }
 
   /// Bind an agent to the pi backend (or back to the offline planner).
@@ -314,6 +414,7 @@ class StudioController extends ChangeNotifier implements CommandBridge {
   static const _kEffects = 'starlight.effects.v1';
   static const _kSessions = 'starlight.sessions.v1';
   static const _kMemories = 'starlight.memories.v1';
+  static const _kUsers = 'starlight.users.v1';
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -359,6 +460,7 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     try {
       p.setString(_kSessions, sessions.encode());
       p.setString(_kMemories, memory.encode());
+      p.setString(_kUsers, users.encode());
     } catch (e) {
       appLog.error('persist failed: $e', scope: 'system');
     }
@@ -367,7 +469,8 @@ class StudioController extends ChangeNotifier implements CommandBridge {
   void _restoreJournal() {
     final p = _prefs;
     if (p == null) return;
-    memory.loadEncoded(p.getString(_kMemories));
+    memory.loadEncoded(p.getString(_kMemories) ?? '');
+    users.loadEncoded(p.getString(_kUsers) ?? '');
     sessions.loadEncoded(p.getString(_kSessions));
     sessions.addListener(_scheduleSave);
     memory.addListener(_scheduleSave);
@@ -402,6 +505,7 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     pi.dispose();
     models.dispose();
     fs.dispose();
+    users.dispose();
     super.dispose();
   }
 

@@ -479,6 +479,66 @@ class SystemScreen extends StatelessWidget {
             ),
           ),
         ]),
+        _section(palette, 'ACCOUNT', [
+          if (!studio.users.hasUsers)
+            _row(
+              palette,
+              'operators',
+              InkWell(
+                onTap: () => _accountDialog(context, studio, palette),
+                child: Text(
+                  'none — create the first',
+                  style: TextStyle(
+                    fontFamily: 'Mono',
+                    fontSize: 11,
+                    color: palette.warn,
+                  ),
+                ),
+              ),
+            )
+          else ...[
+            _row(
+              palette,
+              'signed in',
+              Text(
+                studio.users.active?.name ?? 'locked',
+                style: TextStyle(
+                  fontFamily: 'Mono',
+                  fontSize: 11,
+                  color: studio.users.active == null ? palette.warn : palette.ok,
+                ),
+              ),
+            ),
+            _row(
+              palette,
+              'operators',
+              Text(
+                '${studio.users.users.length}',
+                style: TextStyle(
+                  fontFamily: 'Mono',
+                  fontSize: 11,
+                  color: palette.mid,
+                ),
+              ),
+            ),
+            _row(
+              palette,
+              studio.users.active == null ? 'unlock' : 'accounts',
+              InkWell(
+                onTap: () => _accountDialog(context, studio, palette),
+                child: Text(
+                  studio.users.active == null ? 'SIGN IN' : 'MANAGE',
+                  style: TextStyle(
+                    fontFamily: 'Mono',
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: palette.bright,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ]),
         _section(palette, 'RUNTIME', [
           _row(
             palette,
@@ -621,6 +681,153 @@ class SystemScreen extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+
+  /// Sign in, create the first operator, or add another account.
+  Future<void> _accountDialog(
+    BuildContext context,
+    StudioController studio,
+    Palette palette,
+  ) async {
+    final name = TextEditingController();
+    final pw = TextEditingController();
+    var mode = studio.users.hasUsers ? 'login' : 'create';
+    String? err;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          backgroundColor: palette.panel,
+          shape: const RoundedRectangleBorder(),
+          title: Text(
+            mode == 'login' ? 'SIGN IN' : 'NEW OPERATOR',
+            style: TextStyle(
+              fontFamily: 'Mono',
+              fontSize: 11,
+              letterSpacing: 1.4,
+              fontWeight: FontWeight.w700,
+              color: palette.bright,
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _acctField(name, palette, 'NAME'),
+              const SizedBox(height: 8),
+              _acctField(pw, palette, 'PASSWORD', obscure: true),
+              if (err != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  err!,
+                  style: TextStyle(
+                    fontFamily: 'Mono',
+                    fontSize: 9,
+                    color: palette.err,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
+              Text(
+                'Passwords are stored as salted SHA-256 on this device only. '
+                'That guards an unlocked phone — it is not encryption.',
+                style: TextStyle(
+                  fontFamily: 'Mono',
+                  fontSize: 8,
+                  height: 1.4,
+                  color: palette.dim,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            if (studio.users.hasUsers)
+              TextButton(
+                onPressed: () => setSt(() {
+                  mode = mode == 'login' ? 'create' : 'login';
+                  err = null;
+                }),
+                child: Text(
+                  mode == 'login' ? 'NEW USER' : 'I HAVE ONE',
+                  style: TextStyle(
+                    fontFamily: 'Mono',
+                    fontSize: 9,
+                    color: palette.dim,
+                  ),
+                ),
+              ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(
+                'CANCEL',
+                style: TextStyle(
+                  fontFamily: 'Mono',
+                  fontSize: 9,
+                  color: palette.dim,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                final n = name.text.trim();
+                final p = pw.text;
+                if (mode == 'login') {
+                  final r = studio.users.login(n, p);
+                  if (r != null) return setSt(() => err = r);
+                  studio.appLog.info('signed in as $n', scope: 'account');
+                  Navigator.pop(ctx);
+                } else {
+                  final r = studio.users.create(n, p);
+                  if (r != null) return setSt(() => err = r);
+                  studio.users.login(n, p);
+                  studio.appLog.info('created operator $n', scope: 'account');
+                  Navigator.pop(ctx);
+                }
+              },
+              child: Text(
+                mode == 'login' ? 'SIGN IN' : 'CREATE',
+                style: TextStyle(
+                  fontFamily: 'Mono',
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  color: palette.bright,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _acctField(
+    TextEditingController c,
+    Palette palette,
+    String label, {
+    bool obscure = false,
+  }) {
+    return TextField(
+      controller: c,
+      obscureText: obscure,
+      style: TextStyle(fontFamily: 'Mono', fontSize: 10, color: palette.bright),
+      cursorColor: palette.bright,
+      decoration: InputDecoration(
+        isDense: true,
+        labelText: label,
+        labelStyle:
+            TextStyle(fontFamily: 'Mono', fontSize: 9, color: palette.dim),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.zero,
+          borderSide: BorderSide(color: palette.line),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.zero,
+          borderSide: BorderSide(color: palette.bright),
+        ),
+      ),
     );
   }
 

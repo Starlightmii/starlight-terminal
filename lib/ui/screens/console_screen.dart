@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 
 import '../../core/console_engine.dart';
 import '../../core/palette.dart';
+import '../../core/console_engine.dart';
+import '../../state/studio_controller.dart';
 import '../../state/terminal_controller.dart';
 import '../widgets/chrome.dart';
 import '../widgets/terminal_line.dart';
@@ -302,6 +304,19 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
     if (value.trim().isEmpty) {
       term.setInput('');
       term.submit();
+      return;
+    }
+    // Shell builtins first: a real working directory beats a fixed grammar.
+    final studio = context.read<StudioController>();
+    final shell = studio.shellExec(value);
+    if (shell != null) {
+      term.print('❯ $value', tone: Tone.heading);
+      for (final l in shell.split('\n')) {
+        if (l.isNotEmpty) term.print(l);
+      }
+      if (shell.isNotEmpty) studio.appLog.info(shell, scope: 'shell');
+      _scrollToBottom();
+      _focus.requestFocus();
       return;
     }
     term.setInput(value);
