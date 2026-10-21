@@ -8,6 +8,11 @@ android/build/
 android/local.properties
 android/key.properties
 android/release-key.jks
+
+# Built binaries are distributed via GitHub Releases, never committed.
+Release/
+*.apk
+*.aab
 *.iml
 .idea/
 .DS_Store
