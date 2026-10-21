@@ -182,7 +182,7 @@ class _PiScreenState extends State<PiScreen> {
 
     setState(() => _running = true);
     final buf = StringBuffer();
-    _append(_Line.out('', kind: _Kind.agent, streaming: true));
+    _append(_Line.out('', kind: _Kind.agent));
     try {
       await for (final c in studio.models.stream(
         provider: provider,
@@ -493,8 +493,8 @@ enum _Kind { cmd, out, sys, err, agent }
 @immutable
 class _Line {
   const _Line(this.text, this.kind);
-  _Line.cmd(String t) : this('$t', _Kind.cmd);
-  _Line.out(String t, {_Kind kind = _Kind.out, bool streaming = false})
+  const _Line.cmd(String t) : this(t, _Kind.cmd);
+  const _Line.out(String t, {_Kind kind = _Kind.out})
       : this(t, kind);
   final String text;
   final _Kind kind;
