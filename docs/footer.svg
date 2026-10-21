@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 200" role="img" aria-label="Starlight Memories footer">
+  <defs>
+    <linearGradient id="fbg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#020705"/>
+      <stop offset="1" stop-color="#04100b"/>
+    </linearGradient>
+    <linearGradient id="fline" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0e3b27" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#2f9b70"/>
+      <stop offset="1" stop-color="#0e3b27" stop-opacity="0"/>
+    </linearGradient>
+    <style>
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    </style>
+  </defs>
+  <rect width="1280" height="200" fill="url(#fbg)"/>
+  <path d="M40 60 H560" stroke="url(#fline)" stroke-width="1"/>
+  <path d="M720 60 H1240" stroke="url(#fline)" stroke-width="1"/>
+  <path d="M640 24 l5 13 13 5 -13 5 -5 13 -5 -13 -13 -5 13 -5 z" fill="#7cffc4"/>
+  <circle cx="640" cy="60" r="2.2" fill="#ffd166"/>
+
+  <g fill="#7cffc4" opacity="0.45">
+    <circle cx="160" cy="34" r="1"/><circle cx="330" cy="80" r="1.2"/>
+    <circle cx="470" cy="30" r="0.9"/><circle cx="810" cy="28" r="1.1"/>
+    <circle cx="960" cy="82" r="1"/><circle cx="1120" cy="36" r="1.2"/>
+    <circle cx="1206" cy="96" r="0.9"/><circle cx="74" cy="92" r="1"/>
+  </g>
+
+  <text class="mono" x="640" y="110" text-anchor="middle" font-size="13" letter-spacing="5" fill="#4fd79a">STARLIGHT MEMORIES · JAIPUR, RAJASTHAN</text>
+  <text class="mono" x="640" y="136" text-anchor="middle" font-size="10" letter-spacing="3" fill="#246348">FLUTTER · PROVIDER · NO CLOUD ACCOUNT · MIT LICENSE</text>
+  <text class="mono" x="640" y="174" text-anchor="middle" font-size="10" letter-spacing="2" fill="#1b5c42">“THE SKY IS NOT THE LIMIT. IT IS THE INTERFACE.”</text>
+  <path d="M560 160 H720" stroke="#1b5c42" stroke-width="1" stroke-dasharray="2 6"/>
+  <circle cx="552" cy="160" r="1.8" fill="#ffd166"/>
+  <circle cx="728" cy="160" r="1.8" fill="#ffd166"/>
+</svg>

@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 460" role="img" aria-labelledby="heroTitle heroDesc">
+  <title id="heroTitle">Starlight Terminal — a pi coding agent inside a CRT sky console</title>
+  <desc id="heroDesc">Dark phosphor-green terminal artwork with a star map, the Starlight Terminal wordmark, feature chips, and a live console mockup.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#020705"/>
+      <stop offset="0.55" stop-color="#030d09"/>
+      <stop offset="1" stop-color="#060a14"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#2dff9c" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#2dff9c" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="violet" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#7a5cff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#7a5cff" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="scan" width="4" height="4" patternUnits="userSpaceOnUse">
+      <rect width="4" height="1" fill="#7cffc4" opacity="0.035"/>
+    </pattern>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+    <filter id="tinyglow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="3"/>
+    </filter>
+    <style>
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+      .eyebrow { font-size: 12px; letter-spacing: 5px; fill: #2f7a5c; }
+      .title { font-size: 66px; font-weight: 700; letter-spacing: 1px; fill: #7cffc4; }
+      .sub { font-size: 15px; letter-spacing: 5px; fill: #4fd79a; }
+      .body { font-size: 14px; fill: #3a9b72; }
+      .dim { font-size: 11px; fill: #246348; }
+      .chip { font-size: 11px; letter-spacing: 2px; fill: #9effd4; }
+      .screen { font-size: 11px; fill: #6fffc0; }
+      .screenDim { font-size: 9px; fill: #2c7c5a; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="460" fill="url(#bg)"/>
+  <ellipse cx="470" cy="160" rx="520" ry="300" fill="url(#halo)"/>
+  <ellipse cx="1130" cy="410" rx="360" ry="260" fill="url(#violet)"/>
+  <rect width="1280" height="460" fill="url(#scan)"/>
+
+  <g opacity="0.55">
+    <path d="M0 90 H1280 M0 180 H1280 M0 270 H1280 M0 360 H1280" stroke="#0a2b1f" stroke-width="1"/>
+    <path d="M160 0 V460 M320 0 V460 M480 0 V460 M640 0 V460 M800 0 V460 M960 0 V460 M1120 0 V460" stroke="#0a2b1f" stroke-width="0.6"/>
+  </g>
+
+  <g fill="#7cffc4">
+    <circle cx="62" cy="54" r="1.4" opacity="0.5"/>
+    <circle cx="118" cy="402" r="1.8" opacity="0.7"/>
+    <circle cx="206" cy="326" r="1.2" opacity="0.4"/>
+    <circle cx="288" cy="72" r="1.6" opacity="0.6"/>
+    <circle cx="372" cy="418" r="1.3" opacity="0.5"/>
+    <circle cx="516" cy="320" r="1.5" opacity="0.5"/>
+    <circle cx="702" cy="50" r="1.2" opacity="0.5"/>
+    <circle cx="762" cy="402" r="2" opacity="0.65"/>
+    <circle cx="1218" cy="62" r="1.4" opacity="0.6"/>
+    <circle cx="1244" cy="286" r="1.7" opacity="0.5"/>
+    <circle cx="1074" cy="34" r="1.2" opacity="0.4"/>
+    <circle cx="936" cy="426" r="1.5" opacity="0.55"/>
+    <circle cx="602" cy="134" r="1" opacity="0.35"/>
+    <circle cx="484" cy="228" r="1" opacity="0.35"/>
+  </g>
+  <g stroke="#ffd166" stroke-width="1" opacity="0.45">
+    <path d="M1090 118 h8 M1094 114 v8"/>
+    <path d="M244 150 h7 M247.5 146.5 v7"/>
+    <path d="M706 240 h6 M709 237 v6"/>
+  </g>
+
+  <g stroke="#123d2c" stroke-width="1">
+    <path d="M20 52 V20 H52" fill="none"/>
+    <path d="M1228 20 H1260 V52" fill="none"/>
+    <path d="M20 408 V440 H52" fill="none"/>
+    <path d="M1228 440 H1260 V408" fill="none"/>
+  </g>
+  <rect x="20" y="20" width="1240" height="420" rx="16" fill="none" stroke="#123d2c" stroke-width="1"/>
+
+  <text class="mono eyebrow" x="70" y="108">STARLIGHT MEMORIES // OBSERVATORY OS</text>
+  <text class="mono title" x="68" y="190">ST<tspan fill="#ffd166">★</tspan>RLIGHT TERMINAL</text>
+  <text class="mono sub" x="72" y="228">A PI CODING AGENT IN A CRT SKY CONSOLE</text>
+
+  <text class="mono body" x="72" y="272">Nine tabs. Four phosphors. Forty-one naked-eye stars.</text>
+  <text class="mono body" x="72" y="294">A native pi-compatible runtime — no broker, no server, on-device.</text>
+
+  <g>
+    <rect x="72" y="322" width="146" height="30" rx="15" fill="#04130d" stroke="#1b5c42"/>
+    <text class="mono chip" x="88" y="342">PI AGENT CORE</text>
+    <rect x="230" y="322" width="104" height="30" rx="15" fill="#04130d" stroke="#1b5c42"/>
+    <text class="mono chip" x="247" y="342">41 STARS</text>
+    <rect x="346" y="322" width="86" height="30" rx="15" fill="#04130d" stroke="#1b5c42"/>
+    <text class="mono chip" x="364" y="342">26 FX</text>
+    <rect x="444" y="322" width="124" height="30" rx="15" fill="#04130d" stroke="#1b5c42"/>
+    <text class="mono chip" x="461" y="342">4 PALETTES</text>
+    <rect x="580" y="322" width="118" height="30" rx="15" fill="#0c0a03" stroke="#6b4d13"/>
+    <text class="mono chip" x="600" y="342" fill="#ffd166">v1.0.0</text>
+  </g>
+
+  <g transform="translate(858 68)">
+    <ellipse cx="171" cy="168" rx="190" ry="170" fill="#2dff9c" opacity="0.10" filter="url(#soft)"/>
+    <rect x="-10" y="-10" width="362" height="336" rx="22" fill="none" stroke="#1b5c42" stroke-width="1"/>
+    <rect x="0" y="0" width="342" height="316" rx="16" fill="#020a06" stroke="#4fd79a" stroke-width="1.2"/>
+
+    <text class="mono screen" x="18" y="27" font-size="12" letter-spacing="2">ST<tspan fill="#ffd166">★</tspan>RLIGHT</text>
+    <text class="mono screenDim" x="134" y="27">GREENWICH</text>
+    <circle cx="232" cy="23" r="2.5" fill="#ffd166"/>
+    <text class="mono screenDim" x="240" y="27">16:50:05</text>
+    <rect x="286" y="13" width="40" height="16" rx="8" fill="none" stroke="#1b5c42"/>
+    <text class="mono screenDim" x="298" y="25" letter-spacing="1">P1</text>
+    <path d="M0 40 H342" stroke="#0e3b27"/>
+
+    <g stroke="#0f4a34" fill="none" opacity="0.9">
+      <circle cx="171" cy="166" r="44"/>
+      <circle cx="171" cy="166" r="82"/>
+      <circle cx="171" cy="166" r="120"/>
+      <path d="M171 46 V286 M51 166 H291" opacity="0.5"/>
+    </g>
+    <g stroke="#2f9b70" stroke-width="1" opacity="0.65">
+      <path d="M171 93 L235 120 L262 174 L228 221 L168 241 L111 210 L92 152 L126 108 Z"/>
+      <path d="M171 93 L168 166 L228 221 M168 166 L92 152 M168 166 L262 174 M168 166 L111 210"/>
+    </g>
+    <g fill="#7cffc4">
+      <circle cx="171" cy="93" r="4"/><circle cx="235" cy="120" r="3.2"/>
+      <circle cx="262" cy="174" r="3.6"/><circle cx="228" cy="221" r="3"/>
+      <circle cx="168" cy="241" r="3.4"/><circle cx="111" cy="210" r="3"/>
+      <circle cx="92" cy="152" r="3.2"/><circle cx="126" cy="108" r="3.4"/>
+      <circle cx="168" cy="166" r="5"/>
+    </g>
+    <circle cx="213" cy="156" r="3.6" fill="#ffd166"/>
+    <circle cx="213" cy="156" r="8" fill="#ffd166" opacity="0.18"/>
+
+    <text class="mono screenDim" x="18" y="250">❯ help</text>
+    <text class="mono screenDim" x="18" y="266">[ ok ] warming optics</text>
+    <text class="mono screenDim" x="18" y="280">[ ok ] loading star catalogue</text>
+    <text class="mono screen" x="18" y="298" font-size="10">session open · 19 memories · LST 13.33h</text>
+  </g>
+
+  <g opacity="0.8">
+    <path d="M1196 118 l4 10 10 4 -10 4 -4 10 -4 -10 -10 -4 10 -4 z" fill="#ffd166"/>
+    <path d="M792 132 l2.5 6 6 2.5 -6 2.5 -2.5 6 -2.5 -6 -6 -2.5 6 -2.5 z" fill="#7cffc4" opacity="0.7"/>
+  </g>
+</svg>

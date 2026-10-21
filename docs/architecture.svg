@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 660" role="img" aria-labelledby="archTitle archDesc">
+  <title id="archTitle">Starlight Terminal architecture</title>
+  <desc id="archDesc">Diagram: Flutter shell feeds three controllers, which drive five core modules and on-device storage.</desc>
+  <defs>
+    <linearGradient id="abg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#020705"/>
+      <stop offset="1" stop-color="#040c0a"/>
+    </linearGradient>
+    <radialGradient id="aglow" cx="50%" cy="0%" r="70%">
+      <stop offset="0" stop-color="#2dff9c" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#2dff9c" stop-opacity="0"/>
+    </radialGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#2f9b70"/>
+    </marker>
+    <style>
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+      .h { font-size: 15px; font-weight: 700; letter-spacing: 2px; fill: #7cffc4; }
+      .body { font-size: 11px; letter-spacing: 0.6px; fill: #3a9b72; }
+      .tag { font-size: 9px; letter-spacing: 2px; fill: #246348; }
+      .amber { fill: #ffd166; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="660" fill="url(#abg)"/>
+  <rect width="1280" height="660" fill="url(#aglow)"/>
+  <g fill="#7cffc4" opacity="0.5">
+    <circle cx="46" cy="44" r="1.4"/><circle cx="1234" cy="72" r="1.6"/>
+    <circle cx="1198" cy="614" r="1.2"/><circle cx="92" cy="624" r="1.3"/>
+    <circle cx="1082" cy="44" r="1"/><circle cx="180" cy="592" r="1"/>
+  </g>
+  <g stroke="#123d2c" stroke-width="1">
+    <path d="M18 54 V18 H54" fill="none"/>
+    <path d="M1226 18 H1262 V54" fill="none"/>
+    <path d="M18 606 V642 H54" fill="none"/>
+    <path d="M1226 642 H1262 V606" fill="none"/>
+  </g>
+
+  <text class="mono" x="60" y="56" font-size="11" letter-spacing="4" fill="#2f7a5c">SYSTEM MAP // V1.0.0</text>
+  <text class="mono" x="58" y="92" font-size="28" font-weight="700" letter-spacing="1" fill="#7cffc4">ONE PROCESS, THREE LAYERS</text>
+  <text class="mono" x="60" y="116" font-size="12" fill="#3a9b72">Flutter paints the console. Three controllers own the state. The core does the work — offline and on-device.</text>
+
+  <!-- Row 1 -->
+  <rect x="60" y="142" width="1160" height="70" rx="10" fill="#04110b" stroke="#1b5c42"/>
+  <text class="mono h" x="82" y="170">FLUTTER SHELL</text>
+  <text class="mono tag" x="1198" y="169" text-anchor="end">SAFEAREA · CRT · STARFIELD</text>
+  <text class="mono body" x="82" y="192">boot · console · map · sessions · agents · pi · keys · effects · log · system</text>
+
+  <path d="M640 212 V250" stroke="#2f9b70" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <text class="mono tag" x="654" y="238">notifyListeners()</text>
+
+  <!-- Row 2 -->
+  <g>
+    <rect x="60" y="258" width="360" height="82" rx="10" fill="#04110b" stroke="#1b5c42"/>
+    <text class="mono h" x="80" y="285">TERMINAL CONTROLLER</text>
+    <text class="mono body" x="80" y="306">boot state · scrollback · palette</text>
+    <text class="mono body" x="80" y="322">sky math · /commands</text>
+
+    <rect x="460" y="258" width="360" height="82" rx="10" fill="#04110b" stroke="#1b5c42"/>
+    <text class="mono h" x="480" y="285">STUDIO CONTROLLER</text>
+    <text class="mono body" x="480" y="306">agents · memory · catalogue</text>
+    <text class="mono body" x="480" y="322">FX rack · scheduler tick</text>
+
+    <rect x="860" y="258" width="360" height="82" rx="10" fill="#04110b" stroke="#1b5c42"/>
+    <text class="mono h" x="880" y="285">PI SESSION</text>
+    <text class="mono body" x="880" y="306">slash commands · sessions</text>
+    <text class="mono body" x="880" y="322">model routing · transcripts</text>
+  </g>
+
+  <path d="M240 340 V374 H640" stroke="#2f9b70" stroke-width="1.2" fill="none" marker-end="url(#arrow)"/>
+  <path d="M640 340 V398" stroke="#2f9b70" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <path d="M1040 340 V374 H640" stroke="#2f9b70" stroke-width="1.2" fill="none" marker-end="url(#arrow)"/>
+  <text class="mono tag" x="654" y="394">tools · prompts · credentials</text>
+
+  <!-- Row 3 -->
+  <g>
+    <rect x="60" y="406" width="216" height="96" rx="10" fill="#04110b" stroke="#1b5c42"/>
+    <text class="mono h" x="76" y="432" font-size="13">PI CORE</text>
+    <text class="mono body" x="76" y="452">install lifecycle</text>
+    <text class="mono body" x="76" y="468">model catalog</text>
+    <text class="mono body" x="76" y="484">auth · versions</text>
+
+    <rect x="296" y="406" width="216" height="96" rx="10" fill="#04110b" stroke="#1b5c42"/>
+    <text class="mono h" x="312" y="432" font-size="13">AGENT RUNTIME</text>
+    <text class="mono body" x="312" y="452">tool catalogue</text>
+    <text class="mono body" x="312" y="468">engines · turns</text>
+    <text class="mono body" x="312" y="484">transcripts</text>
+
+    <rect x="532" y="406" width="216" height="96" rx="10" fill="#04110b" stroke="#1b5c42"/>
+    <text class="mono h" x="548" y="432" font-size="13">MODEL CLIENT</text>
+    <text class="mono body" x="548" y="452">streaming HTTP</text>
+    <text class="mono body" x="548" y="468">retries · timeouts</text>
+    <text class="mono body" x="548" y="484">provider routing</text>
+
+    <rect x="768" y="406" width="216" height="96" rx="10" fill="#04110b" stroke="#1b5c42"/>
+    <text class="mono h" x="784" y="432" font-size="13">VFS · SESSIONS</text>
+    <text class="mono body" x="784" y="452">in-app files</text>
+    <text class="mono body" x="784" y="468">save · resume · fork</text>
+    <text class="mono body" x="784" y="484">JSONL export</text>
+
+    <rect x="1004" y="406" width="216" height="96" rx="10" fill="#04110b" stroke="#1b5c42"/>
+    <text class="mono h" x="1020" y="432" font-size="13">MEMORY · USERS</text>
+    <text class="mono body" x="1020" y="452">memory map</text>
+    <text class="mono body" x="1020" y="468">operator accounts</text>
+    <text class="mono body" x="1020" y="484">preferences</text>
+  </g>
+
+  <path d="M168 502 V536" stroke="#2f9b70" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <path d="M404 502 V536" stroke="#2f9b70" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <path d="M640 502 V536" stroke="#2f9b70" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <path d="M876 502 V536" stroke="#2f9b70" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <path d="M1112 502 V536" stroke="#2f9b70" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- Row 4 -->
+  <rect x="60" y="544" width="540" height="56" rx="10" fill="#04110b" stroke="#1b5c42"/>
+  <text class="mono h" x="80" y="568" font-size="13">ON-DEVICE STORAGE</text>
+  <text class="mono body" x="80" y="586">shared_preferences · JSON · no cloud account</text>
+
+  <rect x="680" y="544" width="540" height="56" rx="10" fill="#04110b" stroke="#1b5c42"/>
+  <text class="mono h" x="700" y="568" font-size="13">TRANSPORT</text>
+  <text class="mono body" x="700" y="586">Android sockets · web same-origin /pi bridge</text>
+
+  <text class="mono" x="60" y="630" font-size="10" letter-spacing="2" fill="#246348">PROVIDER + CHANGENOTIFIER // NO BROKER · NO BACKEND · NO TELEMETRY</text>
+  <path d="M980 626 H1220" stroke="#1b5c42" stroke-width="1" stroke-dasharray="2 5"/>
+  <circle cx="1226" cy="626" r="2" fill="#ffd166"/>
+</svg>

@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 310" role="img" aria-labelledby="palTitle palDesc">
+  <title id="palTitle">Four phosphor palettes</title>
+  <desc id="palDesc">Four palette cards: Phosphor green, Amber, Ice cyan and Nebula violet.</desc>
+  <defs>
+    <linearGradient id="pbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#020705"/>
+      <stop offset="1" stop-color="#04090c"/>
+    </linearGradient>
+    <style>
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+      .head { font-size: 19px; font-weight: 700; letter-spacing: 2px; }
+      .sub { font-size: 10px; letter-spacing: 1.6px; }
+      .term { font-size: 11px; }
+      .dimterm { font-size: 10px; }
+    </style>
+  </defs>
+  <rect width="1280" height="310" fill="url(#pbg)"/>
+  <g fill="#7cffc4" opacity="0.45">
+    <circle cx="60" cy="44" r="1"/><circle cx="1220" cy="56" r="1.3"/>
+    <circle cx="890" cy="24" r="1"/><circle cx="212" cy="288" r="1"/>
+    <circle cx="1160" cy="280" r="1.2"/>
+  </g>
+  <text class="mono" x="60" y="46" font-size="11" letter-spacing="4" fill="#2f7a5c">COLOUR SYSTEM // FOUR PHOSPHORS</text>
+  <text class="mono" x="58" y="70" font-size="12" fill="#3a9b72">One palette role set re-themes the entire console: background, panel, hairline, dim, mid, bright, ok, warn, err.</text>
+
+  <!-- PHOSPHOR -->
+  <g>
+    <rect x="30" y="88" width="290" height="190" rx="12" fill="#020705" stroke="#0e3b27"/>
+    <rect x="30" y="88" width="290" height="190" rx="12" fill="none" stroke="#7cffc4" opacity="0.16"/>
+    <text class="mono head" x="52" y="120" fill="#7cffc4">PHOSPHOR</text>
+    <text class="mono sub" x="52" y="138" fill="#1f7a50">P1 GREEN · THE CLASSIC TUBE</text>
+    <g>
+      <rect x="52" y="152" width="30" height="16" fill="#020705" stroke="#0e3b27"/>
+      <rect x="86" y="152" width="30" height="16" fill="#06110b" stroke="#0e3b27"/>
+      <rect x="120" y="152" width="30" height="16" fill="#0e3b27" stroke="#0e3b27"/>
+      <rect x="154" y="152" width="30" height="16" fill="#1f7a50"/>
+      <rect x="188" y="152" width="30" height="16" fill="#4fd79a"/>
+      <rect x="222" y="152" width="30" height="16" fill="#7cffc4"/>
+    </g>
+    <text class="mono term" x="52" y="192" fill="#7cffc4">❯ help</text>
+    <text class="mono dimterm" x="52" y="212" fill="#1f7a50">[ ok ] warming optics</text>
+    <text class="mono dimterm" x="52" y="230" fill="#1f7a50">[ ok ] loading star catalogue</text>
+    <text class="mono dimterm" x="52" y="250" fill="#4fd79a">session open · 19 memories</text>
+    <circle cx="286" cy="112" r="14" fill="#7cffc4" opacity="0.07"/>
+    <circle cx="286" cy="112" r="4" fill="#7cffc4" opacity="0.5"/>
+  </g>
+
+  <!-- AMBER -->
+  <g>
+    <rect x="330" y="88" width="290" height="190" rx="12" fill="#0A0501" stroke="#40280B"/>
+    <text class="mono head" x="352" y="120" fill="#FFCB6B">AMBER</text>
+    <text class="mono sub" x="352" y="138" fill="#8A5C1B">P3 AMBER · LATE-SHIFT FRIENDLY</text>
+    <g>
+      <rect x="352" y="152" width="30" height="16" fill="#0A0501" stroke="#40280B"/>
+      <rect x="386" y="152" width="30" height="16" fill="#150C04" stroke="#40280B"/>
+      <rect x="420" y="152" width="30" height="16" fill="#40280B" stroke="#40280B"/>
+      <rect x="454" y="152" width="30" height="16" fill="#8A5C1B"/>
+      <rect x="488" y="152" width="30" height="16" fill="#E0A046"/>
+      <rect x="522" y="152" width="30" height="16" fill="#FFCB6B"/>
+    </g>
+    <text class="mono term" x="352" y="192" fill="#FFCB6B">❯ help</text>
+    <text class="mono dimterm" x="352" y="212" fill="#8A5C1B">[ ok ] warming optics</text>
+    <text class="mono dimterm" x="352" y="230" fill="#8A5C1B">[ ok ] loading star catalogue</text>
+    <text class="mono dimterm" x="352" y="250" fill="#E0A046">session open · 19 memories</text>
+    <circle cx="586" cy="112" r="14" fill="#FFCB6B" opacity="0.07"/>
+    <circle cx="586" cy="112" r="4" fill="#FFCB6B" opacity="0.5"/>
+  </g>
+
+  <!-- ICE -->
+  <g>
+    <rect x="630" y="88" width="290" height="190" rx="12" fill="#02070B" stroke="#0E3648"/>
+    <text class="mono head" x="652" y="120" fill="#9DEBFF">ICE</text>
+    <text class="mono sub" x="652" y="138" fill="#1C6C8A">CYAN · COLD APERTURE</text>
+    <g>
+      <rect x="652" y="152" width="30" height="16" fill="#02070B" stroke="#0E3648"/>
+      <rect x="686" y="152" width="30" height="16" fill="#051018" stroke="#0E3648"/>
+      <rect x="720" y="152" width="30" height="16" fill="#0E3648" stroke="#0E3648"/>
+      <rect x="754" y="152" width="30" height="16" fill="#1C6C8A"/>
+      <rect x="788" y="152" width="30" height="16" fill="#5FC6E8"/>
+      <rect x="822" y="152" width="30" height="16" fill="#9DEBFF"/>
+    </g>
+    <text class="mono term" x="652" y="192" fill="#9DEBFF">❯ help</text>
+    <text class="mono dimterm" x="652" y="212" fill="#1C6C8A">[ ok ] warming optics</text>
+    <text class="mono dimterm" x="652" y="230" fill="#1C6C8A">[ ok ] loading star catalogue</text>
+    <text class="mono dimterm" x="652" y="250" fill="#5FC6E8">session open · 19 memories</text>
+    <circle cx="886" cy="112" r="14" fill="#9DEBFF" opacity="0.07"/>
+    <circle cx="886" cy="112" r="4" fill="#9DEBFF" opacity="0.5"/>
+  </g>
+
+  <!-- NEBULA -->
+  <g>
+    <rect x="930" y="88" width="290" height="190" rx="12" fill="#06040D" stroke="#2A2050"/>
+    <text class="mono head" x="952" y="120" fill="#D6BCFF">NEBULA</text>
+    <text class="mono sub" x="952" y="138" fill="#5D4BA0">H-ALPHA VIOLET · MOODY</text>
+    <g>
+      <rect x="952" y="152" width="30" height="16" fill="#06040D" stroke="#2A2050"/>
+      <rect x="986" y="152" width="30" height="16" fill="#0C0817" stroke="#2A2050"/>
+      <rect x="1020" y="152" width="30" height="16" fill="#2A2050" stroke="#2A2050"/>
+      <rect x="1054" y="152" width="30" height="16" fill="#5D4BA0"/>
+      <rect x="1088" y="152" width="30" height="16" fill="#A98BE8"/>
+      <rect x="1122" y="152" width="30" height="16" fill="#D6BCFF"/>
+    </g>
+    <text class="mono term" x="952" y="192" fill="#D6BCFF">❯ help</text>
+    <text class="mono dimterm" x="952" y="212" fill="#5D4BA0">[ ok ] warming optics</text>
+    <text class="mono dimterm" x="952" y="230" fill="#5D4BA0">[ ok ] loading star catalogue</text>
+    <text class="mono dimterm" x="952" y="250" fill="#A98BE8">session open · 19 memories</text>
+    <circle cx="1186" cy="112" r="14" fill="#D6BCFF" opacity="0.07"/>
+    <circle cx="1186" cy="112" r="4" fill="#D6BCFF" opacity="0.5"/>
+  </g>
+</svg>

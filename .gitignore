@@ -16,3 +16,6 @@ Release/
 *.iml
 .idea/
 .DS_Store
+
+# Source recording used to render the README demo GIFs.
+App Overview/
