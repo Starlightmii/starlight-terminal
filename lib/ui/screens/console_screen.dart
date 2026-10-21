@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 
 import '../../core/console_engine.dart';
 import '../../core/palette.dart';
-import '../../core/console_engine.dart';
 import '../../state/studio_controller.dart';
 import '../../state/terminal_controller.dart';
 import '../widgets/chrome.dart';

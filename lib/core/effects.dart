@@ -357,6 +357,12 @@ class _EffectPainter extends CustomPainter {
         _paintRipple(canvas, size, t);
       case EffectKind.aurora:
         _paintAurora(canvas, size, t);
+      case EffectKind.circuit:
+        _paintCircuit(canvas, size, t);
+      case EffectKind.bloomfield:
+        _paintBloomfield(canvas, size, t);
+      case EffectKind.glyphrain:
+        _paintGlyphRain(canvas, size, t);
       case EffectKind.none:
         break;
     }
@@ -779,6 +785,118 @@ class _EffectPainter extends CustomPainter {
         [Offset(rnd.nextDouble() * size.width, rnd.nextDouble() * size.height)],
         paint,
       );
+    }
+  }
+
+
+  /// Traces racing along a lattice, like signal on a circuit board.
+  void _paintCircuit(Canvas canvas, Size size, double t) {
+    final rnd = math.Random(9137);
+    final step = 22.0 + (1 - params.density) * 26;
+    final paint = Paint()
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke;
+    final cols = (size.width / step).ceil() + 1;
+    final rows = (size.height / step).ceil() + 1;
+
+    // Static lattice.
+    paint.color = palette.line.withValues(alpha: 0.30 * params.intensity);
+    for (var i = 0; i < cols; i++) {
+      final x = i * step;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    }
+    for (var j = 0; j < rows; j++) {
+      final y = j * step;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+    }
+
+    // Pulses travelling along a row or column.
+    final n = (18 + params.density * 40).round();
+    for (var k = 0; k < n; k++) {
+      final horizontal = rnd.nextBool();
+      final lane = (horizontal ? rows : cols) * rnd.nextDouble();
+      final phase = (t * (0.15 + rnd.nextDouble() * 0.5) + rnd.nextDouble()) % 1;
+      final len = 0.06 + rnd.nextDouble() * 0.16;
+      final a = phase * (horizontal ? size.width : size.height);
+      final b = math.min(
+        (phase + len) * (horizontal ? size.width : size.height),
+        horizontal ? size.width : size.height,
+      );
+      final c = palette.bright.withValues(alpha: 0.55 * params.intensity);
+      paint
+        ..color = c
+        ..strokeWidth = 1.2;
+      if (horizontal) {
+        canvas.drawLine(Offset(a, lane * step), Offset(b, lane * step), paint);
+      } else {
+        canvas.drawLine(Offset(lane * step, a), Offset(lane * step, b), paint);
+      }
+    }
+  }
+
+  /// Slow, breathing light blooms that drift and overlap.
+  void _paintBloomfield(Canvas canvas, Size size, double t) {
+    final rnd = math.Random(9137);
+    final n = (4 + params.density * 7).round();
+    for (var i = 0; i < n; i++) {
+      final cx = rnd.nextDouble() * size.width;
+      final cy = rnd.nextDouble() * size.height;
+      final drift = 0.35 + rnd.nextDouble() * 0.9;
+      final x = cx + math.sin(t * drift + i) * size.width * 0.12;
+      final y = cy + math.cos(t * drift * 0.8 + i) * size.height * 0.10;
+      final r = (size.shortestSide * (0.10 + rnd.nextDouble() * 0.22)) *
+          (0.75 + 0.25 * math.sin(t * 0.5 + i));
+      final hue = (params.hue + rnd.nextDouble() * 0.25) % 1.0;
+      final base = HSLColor.fromAHSL(
+        1,
+        hue * 360,
+        0.55,
+        (0.32 + 0.22 * params.bloom).clamp(0.2, 0.72),
+      ).toColor();
+      final paint = Paint()
+        ..color = base.withValues(alpha: 0.13 * params.intensity)
+        ..maskFilter = MaskFilter.blur(
+          BlurStyle.normal,
+          26 + 34 * params.bloom,
+        );
+      canvas.drawCircle(Offset(x, y), r, paint);
+    }
+  }
+
+  /// Falling ASCII glyphs — a slower, textual cousin of the matrix rain.
+  static const List<String> _glyphs = [
+    '·', '+', '*', '░', '▒', '≈', '≡', '∷', '∎', '◇', '△', '⌁', '•', '∘',
+  ];
+
+  void _paintGlyphRain(Canvas canvas, Size size, double t) {
+    final rnd = math.Random(9137);
+    final colW = 16.0 + (1 - params.density) * 14;
+    final cols = (size.width / colW).ceil();
+    for (var i = 0; i < cols; i++) {
+      final x = i * colW + colW * 0.5;
+      final speed = 0.25 + rnd.nextDouble() * 0.9;
+      final offset = rnd.nextDouble();
+      final headY = ((t * speed + offset) % 1.3 - 0.15) * size.height;
+      final tail = 60 + rnd.nextDouble() * 180;
+      for (var k = 0; k < 9; k++) {
+        final y = headY - k * (tail / 9);
+        if (y < -20 || y > size.height + 20) continue;
+        final fade = (1 - k / 9) * params.intensity;
+        final g = _glyphs[rnd.nextInt(_glyphs.length)];
+        final tp = TextPainter(
+          text: TextSpan(
+            text: g,
+            style: TextStyle(
+              fontFamily: 'Mono',
+              fontSize: 11,
+              color: (k == 0 ? palette.bright : palette.ok)
+                  .withValues(alpha: 0.55 * fade),
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(canvas, Offset(x - tp.width / 2, y));
+      }
     }
   }
 
