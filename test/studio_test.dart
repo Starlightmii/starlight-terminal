@@ -248,12 +248,13 @@ void main() {
   });
 
   group('agent runtime', () {
-    test('presets ship four distinct specialists', () {
+    test('roster ships one research agent by default', () {
       final agents = AgentPresets.build();
-      expect(agents.length, 4);
+      expect(agents.length, 1);
+      expect(agents.first.id, 'researcher');
+      expect(agents.first.persona.trim().isNotEmpty, isTrue);
       final ids = agents.map((a) => a.id).toList();
       expect(ids.toSet().length, ids.length);
-      expect(agents.every((a) => a.persona.trim().isNotEmpty), isTrue);
     });
 
     test('state transitions and counters behave', () {
@@ -280,7 +281,7 @@ void main() {
     });
 
     test('toJson/fromJson preserves identity fields', () {
-      final a = AgentPresets.build()[2];
+      final a = AgentPresets.build()[0];
       final back = AgentRuntime.fromJson(a.toJson());
       expect(back.id, a.id);
       expect(back.name, a.name);
@@ -320,7 +321,7 @@ void main() {
 
     test('a palette task changes the palette', () async {
       final h = Harness();
-      final agent = AgentPresets.build()[3];
+      final agent = AgentPresets.build()[0];
       final loop = AgentLoop(
         context: h.ctx,
         providerFor: (_) => null,
@@ -334,7 +335,7 @@ void main() {
 
     test('a log task writes a note', () async {
       final h = Harness();
-      final agent = AgentPresets.build()[2];
+      final agent = AgentPresets.build()[0];
       final loop = AgentLoop(
         context: h.ctx,
         providerFor: (_) => null,
@@ -390,7 +391,7 @@ void main() {
 
     test('the transcript always ends with an assistant line', () async {
       final h = Harness();
-      final agent = AgentPresets.build()[1];
+      final agent = AgentPresets.build()[0];
       final loop = AgentLoop(
         context: h.ctx,
         providerFor: (_) => null,

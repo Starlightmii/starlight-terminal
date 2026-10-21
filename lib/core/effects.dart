@@ -16,6 +16,9 @@ enum EffectKind {
   gridwarp,
   ripple,
   aurora,
+  circuit,
+  bloomfield,
+  glyphrain,
   none,
 }
 
@@ -125,6 +128,9 @@ class EffectParams {
   }
 
   static const Map<EffectKind, String> labels = {
+    EffectKind.circuit: 'CIRCUIT',
+    EffectKind.bloomfield: 'BLOOM',
+    EffectKind.glyphrain: 'GLYPH',
     EffectKind.matrix: 'MATRIX',
     EffectKind.diffusion: 'DIFFUSION',
     EffectKind.layers: 'LAYERS',
@@ -138,6 +144,9 @@ class EffectParams {
   };
 
   static const Map<EffectKind, String> descriptions = {
+    EffectKind.circuit: 'Traces racing along a hardware lattice.',
+    EffectKind.bloomfield: 'Soft drifting light blooms that breathe.',
+    EffectKind.glyphrain: 'Falling ASCII glyphs in a slow rain.',
     EffectKind.matrix: 'Falling glyph rain. The canonical terminal effect.',
     EffectKind.diffusion: 'Slow reaction–diffusion field behind the glass.',
     EffectKind.layers: 'Random parallax layers, drifting and re-seeding.',
