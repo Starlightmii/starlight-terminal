@@ -260,6 +260,9 @@ class SessionStore extends ChangeNotifier {
     return s;
   }
 
+  /// Force a rebuild after mutating a session in place (title, messages).
+  void touch() => notifyListeners();
+
   void setActive(String? id) {
     if (_activeId == id) return;
     _activeId = id;

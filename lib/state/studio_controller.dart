@@ -13,6 +13,7 @@ import '../core/memory.dart';
 import '../core/palette.dart';
 import '../core/model_client.dart';
 import '../core/pi_core.dart';
+import 'pi_session.dart';
 import '../core/users.dart';
 import '../core/vfs.dart';
 import '../core/providers.dart';
@@ -248,14 +249,240 @@ class StudioController extends ChangeNotifier implements CommandBridge {
       case 'df':
         return 'fs      files\n${fs.fileCount.toString().padLeft(6)} ${fs.prompt}';
       case 'whoami':
-        return 'operator';
+        return fs.prompt.startsWith('~')
+            ? (users.active?.name ?? 'operator')
+            : 'operator';
       case 'uname':
         return 'Starlight Terminal · ${pi.statusLabel}';
       case 'pi':
         return _piCmd(args);
+
+      // ── text utilities ────────────────────────────────────────────────
+      case 'grep':
+      case 'rg':
+        return _shellGrep(args);
+      case 'head':
+      case 'tail':
+        return _shellHeadTail(cmd, args);
+      case 'wc':
+        return _shellWc(args);
+      case 'tree':
+        return _shellTree(args);
+      case 'find':
+        return _shellFind(args);
+      case 'which':
+      case 'type':
+        return _shellWhich(args);
+
+      // ── file ops ──────────────────────────────────────────────────────
+      case 'cp':
+      case 'mv':
+        return _shellCpMv(cmd, args);
+      case 'stat':
+        if (args.isEmpty) return 'usage: stat <path>';
+        final body = fs.read(args.first);
+        if (body == null) {
+          if (!fs.isDir(args.first)) return 'stat: no such path: ${args.first}';
+          return '${args.first}: directory';
+        }
+        return '${args.first}: file\n'
+            'bytes   ${body.length}\n'
+            'lines   ${body.split('\n').length}';
+      case 'du':
+        return _shellDu(args);
+
+      // ── environment ───────────────────────────────────────────────────
+      case 'env':
+      case 'set':
+        return _shellEnv();
+      case 'date':
+        return DateTime.now().toLocal().toString();
+      case 'uptime':
+        return 'up ${(DateTime.now().millisecondsSinceEpoch ~/ 1000)}s '
+            '· ${_agents.length} agents · ${sessions.all.length} sessions';
+      case 'history':
+        return null; // handled by the terminal's own grammar
+      case 'man':
+      case '--help':
+        return _shellMan(args);
+
       default:
         return null; // not a builtin
     }
+  }
+
+  String _shellGrep(List<String> args) {
+    if (args.isEmpty) return 'usage: grep <pattern> [file…]';
+    final pattern = args.first;
+    final targets = args.skip(1).toList();
+    final hits = <String>[];
+    RegExp re;
+    try {
+      re = RegExp(pattern, caseSensitive: false);
+    } catch (_) {
+      return 'grep: bad pattern: $pattern';
+    }
+
+    if (targets.isEmpty) {
+      // Grep the current directory's files, one level deep.
+      final entries = fs.list('.') ?? const [];
+      for (final e in entries) {
+        if (e.value) continue;
+        final body = fs.read(e.key);
+        if (body == null) continue;
+        for (final line in body.split('\n')) {
+          if (re.hasMatch(line)) hits.add('${e.key}: $line');
+        }
+      }
+    } else {
+      for (final t in targets) {
+        final body = fs.read(t);
+        if (body == null) {
+          hits.add('grep: $t: no such file');
+          continue;
+        }
+        for (final line in body.split('\n')) {
+          if (re.hasMatch(line)) hits.add('${targets.length > 1 ? '$t: ' : ''}$line');
+        }
+      }
+    }
+    if (hits.isEmpty) return '';
+    return hits.take(120).join('\n');
+  }
+
+  String _shellHeadTail(String cmd, List<String> args) {
+    var n = 10;
+    final files = <String>[];
+    for (final a in args) {
+      final parsed = int.tryParse(a);
+      if (parsed != null && files.isEmpty) {
+        n = parsed.clamp(1, 500);
+      } else {
+        files.add(a);
+      }
+    }
+    if (files.isEmpty) return 'usage: $cmd [-n] <file>';
+    final body = fs.read(files.first);
+    if (body == null) return '$cmd: no such file: ${files.first}';
+    final lines = body.split('\n');
+    final slice = cmd == 'head'
+        ? lines.take(n)
+        : lines.skip(math.max(0, lines.length - n));
+    return slice.join('\n');
+  }
+
+  String _shellWc(List<String> args) {
+    if (args.isEmpty) return 'usage: wc <file>';
+    final body = fs.read(args.first);
+    if (body == null) return 'wc: no such file: ${args.first}';
+    final lines = body.isEmpty ? 0 : body.split('\n').length;
+    final words = body.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+    return '${lines.toString().padLeft(5)} '
+        '${words.toString().padLeft(6)} '
+        '${body.length.toString().padLeft(7)} ${args.first}';
+  }
+
+  String _shellTree(List<String> args) {
+    final root = args.isEmpty ? '.' : args.first;
+    final entries = fs.list(root);
+    if (entries == null) return 'tree: not a directory: $root';
+    final b = StringBuffer('${fs.isDir(root) ? root : '.'}\n');
+    for (var i = 0; i < entries.length; i++) {
+      final e = entries[i];
+      final last = i == entries.length - 1;
+      b.writeln('${last ? '└── ' : '├── '}${e.key}${e.value ? '/' : ''}');
+    }
+    b.write('${entries.length} entries');
+    return b.toString();
+  }
+
+  String _shellFind(List<String> args) {
+    // `find [path] [-name pattern]`
+    var path = '.';
+    String? namePattern;
+    for (var i = 0; i < args.length; i++) {
+      if (args[i] == '-name' && i + 1 < args.length) {
+        namePattern = args[++i];
+      } else if (!args[i].startsWith('-')) {
+        path = args[i];
+      }
+    }
+    final base = fs.isDir(path) ? path : '.';
+    final entries = fs.list(base);
+    if (entries == null) return 'find: not a directory: $path';
+    final re = namePattern == null ? null : RegExp(namePattern.replaceAll('*', '.*'));
+    final hits = <String>[];
+    for (final e in entries) {
+      if (re != null && !re.hasMatch(e.key)) continue;
+      hits.add('$base/${e.key}');
+    }
+    return hits.join('\n');
+  }
+
+  String _shellWhich(List<String> args) {
+    if (args.isEmpty) return 'usage: which <command>';
+    const builtins = {
+      'ls', 'cd', 'pwd', 'cat', 'echo', 'mkdir', 'touch', 'rm', 'df',
+      'grep', 'head', 'tail', 'wc', 'tree', 'find', 'cp', 'mv', 'stat',
+      'du', 'env', 'date', 'pi', 'which', 'uname', 'whoami',
+    };
+    return args
+        .map((a) => builtins.contains(a) ? '$a: shell builtin' : '$a: not found')
+        .join('\n');
+  }
+
+  String _shellCpMv(String cmd, List<String> args) {
+    if (args.length < 2) return 'usage: $cmd <src> <dst>';
+    final body = fs.read(args[0]);
+    if (body == null) return '$cmd: no such file: ${args[0]}';
+    fs.write(args[1], body);
+    if (cmd == 'mv') fs.remove(args[0]);
+    return '';
+  }
+
+  String _shellDu(List<String> args) {
+    final entries = fs.list(args.isEmpty ? '.' : args.first);
+    if (entries == null) return 'du: not a directory';
+    var total = 0;
+    for (final e in entries) {
+      if (e.value) continue;
+      total += fs.read(e.key)?.length ?? 0;
+    }
+    return '${total.toString().padLeft(7)}  bytes total';
+  }
+
+  String _shellEnv() {
+    return 'USER=${users.active?.name ?? 'operator'}\n'
+        'PWD=${fs.cwd}\n'
+        'SHELL=/home/user/.pi/bin/pi\n'
+        'PI_VERSION=${pi.installedVersion.isEmpty ? 'none' : pi.installedVersion}\n'
+        'PI_MODEL=${pi.activeModel.isEmpty ? 'default' : pi.activeModel}\n'
+        'PROVIDERS=${agentProviders.length}\n'
+        'SESSIONS=${sessions.all.length}\n'
+        'MEMORIES=${memory.all.length}\n'
+        'TERM=starlight-256color';
+  }
+
+  String _shellMan(List<String> args) {
+    if (args.isEmpty) {
+      return 'Starlight shell — available builtins:\n'
+          '  ls cd pwd cat echo mkdir touch rm cp mv df du stat tree\n'
+          '  grep head tail wc find which env date uname whoami uptime\n'
+          '  pi history clear help';
+    }
+    final topic = args.first;
+    const pages = <String, String>{
+      'ls': 'ls [path]\n  List a directory. Directories are shown with a /.',
+      'cat': 'cat <file>\n  Print a file to the transcript.',
+      'grep': 'grep <pattern> [file…]\n  Case-insensitive regex search. With no '
+          'file, searches the current directory.',
+      'tree': 'tree [path]\n  One-level tree with box drawing characters.',
+      'find': 'find [path] [-name pattern]\n  Match entries; * is a wildcard.',
+      'pi': 'pi <status|models|install|update>\n  The agent core. Same commands '
+          'as the PI tab, without the transcript.',
+      'env': 'env\n  Prints the shell environment, including the pi binding.',
+    };
+    return pages[topic] ?? 'no manual entry for $topic. Try `man` alone.';
   }
 
   String _piCmd(List<String> args) {
@@ -332,6 +559,10 @@ class StudioController extends ChangeNotifier implements CommandBridge {
 
   /// The app-wide log tail shown by the LOG tab.
   final AppLog appLog = AppLog();
+
+  /// The live pi terminal session. Lives here, not in a widget, so switching
+  /// tabs never loses the transcript.
+  late final PiSession piSession = PiSession(this);
 
   late final AgentScheduler scheduler = AgentScheduler(
     agentsProvider: () => _agents,
@@ -438,6 +669,8 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     _loop!.piRunner = _runPiTurn;
     memory.addListener(_notify);
     sessions.addListener(_notify);
+    piSession.addListener(_notify);
+    piSession.boot();
     appLog.info('studio online · ${_agents.length} agents', scope: 'system');
     // Autonomous runs: one heartbeat for the fleet.
     scheduler.start();
@@ -502,6 +735,8 @@ class StudioController extends ChangeNotifier implements CommandBridge {
     _saveJournal();
     scheduler.dispose();
     pi.removeListener(_notify);
+    piSession.removeListener(_notify);
+    piSession.dispose();
     pi.dispose();
     models.dispose();
     fs.dispose();
@@ -790,6 +1025,28 @@ class StudioController extends ChangeNotifier implements CommandBridge {
       scale: 0.6 + r.nextDouble() * 1.2,
       chroma: r.nextDouble(),
       grain: r.nextDouble() * 0.5,
+      spectrum: r.nextDouble() * 0.9,
+      saturation: 0.4 + r.nextDouble() * 0.6,
+      hue: r.nextDouble(),
+      bloom: r.nextDouble() * 0.8,
+      warp: r.nextDouble(),
+    ));
+  }
+
+  /// Apply a named look from [kEffectPresets].
+  void applyPreset(EffectPreset preset) {
+    setEffects(preset.params);
+    appLog.info('fx preset → ${preset.name}', scope: 'effects');
+  }
+
+  /// Rotate the colour ramp without touching the renderer — the single most
+  /// requested "make it look different" action.
+  void rollColour() {
+    final r = math.Random();
+    setEffects(_effects.copyWith(
+      hue: r.nextDouble(),
+      spectrum: _effects.spectrum < 0.35 ? 0.65 + r.nextDouble() * 0.35 : null,
+      saturation: 0.55 + r.nextDouble() * 0.45,
     ));
   }
 

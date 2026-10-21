@@ -312,15 +312,29 @@ class TermPanel extends StatelessWidget {
       decoration: BoxDecoration(
         color: palette.panel.withValues(alpha: 0.72),
         border: Border.all(color: borderColor, width: 1),
+        // A two-layer shadow: a tight phosphor bloom plus a wide, very faint
+        // pool of light. On a CRT this is what makes a panel look lit rather
+        // than merely drawn.
         boxShadow: accent
             ? [
                 BoxShadow(
-                  color: palette.bright.withValues(alpha: 0.07),
-                  blurRadius: 18,
-                  spreadRadius: 1,
+                  color: palette.bright.withValues(alpha: 0.10),
+                  blurRadius: 10,
+                  spreadRadius: 0,
+                ),
+                BoxShadow(
+                  color: palette.bright.withValues(alpha: 0.05),
+                  blurRadius: 26,
+                  spreadRadius: 2,
                 ),
               ]
-            : null,
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.35),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -336,24 +350,39 @@ class TermPanel extends StatelessWidget {
 
   Widget _titleBar(Color borderColor) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
+      padding: const EdgeInsets.fromLTRB(0, 6, 8, 6),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: borderColor)),
         color: palette.bg.withValues(alpha: 0.55),
       ),
       child: Row(
         children: [
+          // A solid tick in the corner — the one piece of chrome that makes a
+          // bordered box read as a titled instrument rather than a div.
+          Container(
+            width: 3,
+            height: 12,
+            margin: const EdgeInsets.only(right: 8),
+            color: palette.bright,
+          ),
           Text(
-            '[ ${title!} ]',
+            title!.toUpperCase(),
             style: TextStyle(
               fontFamily: 'Mono',
-              fontSize: 10,
-              letterSpacing: 1.6,
+              fontSize: 9.5,
+              letterSpacing: 1.8,
               fontWeight: FontWeight.w700,
               color: palette.mid,
             ),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Container(
+              height: 1,
+              color: borderColor.withValues(alpha: 0.5),
+            ),
+          ),
+          const SizedBox(width: 8),
           if (trailing != null) trailing!,
         ],
       ),

@@ -254,25 +254,45 @@ class TermNavBar extends StatelessWidget {
     Palette palette,
     bool active,
   ) {
-    final color = active ? palette.bright : palette.mid.withValues(alpha: 0.75);
+    final color = active ? palette.bright : palette.mid.withValues(alpha: 0.72);
     return Center(
       child: FittedBox(
         fit: BoxFit.scaleDown,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // A 2px accent rule above the active tab reads as a physical
+            // indicator on a panel, and costs nothing to animate.
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              width: active ? 18 : 0,
+              height: 2,
+              margin: const EdgeInsets.only(bottom: 4),
+              decoration: BoxDecoration(
+                color: palette.bright,
+                boxShadow: active
+                    ? [
+                        BoxShadow(
+                          color: palette.bright.withValues(alpha: 0.85),
+                          blurRadius: 8,
+                        ),
+                      ]
+                    : null,
+              ),
+            ),
             Text(
               tab.glyph,
               style: TextStyle(
                 fontFamily: 'Mono',
-                fontSize: 12,
+                fontSize: active ? 13 : 12,
                 height: 1.0,
                 color: color,
                 shadows: active
                     ? [
                         Shadow(
-                          color: palette.bright.withValues(alpha: 0.8),
-                          blurRadius: 9,
+                          color: palette.bright.withValues(alpha: 0.85),
+                          blurRadius: 10,
                         ),
                       ]
                     : null,
@@ -286,11 +306,9 @@ class TermNavBar extends StatelessWidget {
                 fontFamily: 'Mono',
                 fontSize: 8,
                 height: 1.0,
-                letterSpacing: 0.4,
+                letterSpacing: active ? 0.9 : 0.4,
                 fontWeight: active ? FontWeight.w700 : FontWeight.w400,
                 color: color,
-                decoration: active ? TextDecoration.underline : null,
-                decorationColor: palette.bright,
               ),
             ),
           ],

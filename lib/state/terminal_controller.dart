@@ -416,6 +416,8 @@ class TerminalController extends ChangeNotifier {
       case 'clear':
       case 'cls':
         clear();
+      case 'history':
+        _cmdHistory();
       case 'banner':
         _cmdBanner();
       case 'echo':
@@ -438,8 +440,21 @@ class TerminalController extends ChangeNotifier {
   // ── Commands ────────────────────────────────────────────────────────────
 
   void _cmdHelp() {
+    const shellRows = <List<String>>[
+      ['ls [path]', 'list a directory'],
+      ['cd <path>', 'change working directory'],
+      ['pwd', 'print working directory'],
+      ['cat <file>', 'print a file'],
+      ['echo <text>', 'print text, or `echo x > file` to write'],
+      ['mkdir <dir>', 'create a directory'],
+      ['touch <file>', 'create an empty file'],
+      ['rm <path>', 'remove a file or directory'],
+      ['df', 'filesystem usage'],
+      ['pi <sub>', 'status | models | install | update'],
+    ];
     const rows = <List<String>>[
       ['help', 'this index'],
+      ['clear / history', 'wipe scrollback / command history'],
       ['sky', 'visible sky summary + brightest objects'],
       ['star <name>', 'full data sheet for one object'],
       ['find <text>', 'search the catalogue by name or constellation'],
@@ -467,12 +482,22 @@ class TerminalController extends ChangeNotifier {
       ['about', 'what this is'],
     ];
 
-    print(ruleLine('COMMAND INDEX', 46), tone: Tone.heading);
+    print(ruleLine('SHELL', 52), tone: Tone.heading);
+    for (final r in shellRows) {
+      print('  ${pad(r[0], 18)}${r[1]}', tone: Tone.plain);
+    }
+    print('');
+    print(ruleLine('CONSOLE', 52), tone: Tone.heading);
     for (final r in rows) {
       print('  ${pad(r[0], 18)}${r[1]}', tone: Tone.plain);
     }
-    print(ruleLine('', 46), tone: Tone.line);
+    print(ruleLine('', 52), tone: Tone.line);
     print('  Arguments in angle brackets are required.', tone: Tone.dim);
+    print(
+      '  The PI tab has its own command set — `/help` there, or the '
+      'COMMANDS reference.',
+      tone: Tone.dim,
+    );
   }
 
   void _cmdSky(List<String> args) {
@@ -1081,6 +1106,20 @@ class TerminalController extends ChangeNotifier {
     }
     b.setEffect(name);
     print('  effect → $name', tone: Tone.ok, glow: true);
+  }
+
+  void _cmdHistory() {
+    if (_history.isEmpty) {
+      print('  no commands yet this session.', tone: Tone.dim);
+      return;
+    }
+    print(ruleLine('HISTORY', 46), tone: Tone.heading);
+    final start = _history.length > 25 ? _history.length - 25 : 0;
+    for (var i = start; i < _history.length; i++) {
+      print('  ${padLeft('${i + 1}', 4)}  ${_history[i]}', tone: Tone.plain);
+    }
+    print(ruleLine('', 46), tone: Tone.line);
+    print('  ${_history.length} entries · ↑ recalls', tone: Tone.dim);
   }
 
   void _cmdBanner() {
